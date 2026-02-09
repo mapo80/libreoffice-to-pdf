@@ -1,0 +1,26 @@
+# LibreOffice source (cloned at build time)
+lo-src/
+
+# Build output
+output/
+slimlo-api/build/
+
+# .NET build artifacts
+dotnet/**/bin/
+dotnet/**/obj/
+
+# Docker build context
+.docker-cache/
+
+# ccache
+.ccache/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
