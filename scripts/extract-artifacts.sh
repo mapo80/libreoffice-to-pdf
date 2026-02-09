@@ -1,6 +1,19 @@
 #!/bin/bash
 # extract-artifacts.sh — Extract only necessary files from LibreOffice instdir
 # This reduces the output from ~300MB to the minimum needed for PDF conversion.
+#
+# LibreOffice instdir/ structure (after build):
+#   program/        — libraries (.so/.dylib), executables, UNO registries, RC files
+#   share/registry/ — XCD configuration files (required for bootstrap)
+#   share/config/   — misc config (fontconfig, etc.)
+#   share/filter/   — filter definitions (format detection)
+#   share/palette/  — color palettes (may be needed for chart rendering)
+#   share/fonts/    — bundled fonts (excluded with --without-fonts)
+#   share/gallery/  — galleries (excluded with --without-galleries)
+#   share/template/ — templates (excluded with --without-templates)
+#
+# With --enable-mergelibs=more, almost all code is in libmergedlo.so.
+# Only URE libraries and some external dependencies remain separate.
 set -euo pipefail
 
 INSTDIR="${1:?Usage: extract-artifacts.sh <instdir> <output-dir>}"
@@ -15,65 +28,51 @@ echo "Extracting artifacts from $INSTDIR to $OUTPUT_DIR..."
 
 # Clean output directory
 rm -rf "$OUTPUT_DIR"
-mkdir -p "$OUTPUT_DIR"/{lib,share,program}
+mkdir -p "$OUTPUT_DIR"/program
 
 # -----------------------------------------------------------
-# Core libraries (the merged library contains most of LO)
+# 1. Copy ALL shared libraries from program/
+#    With mergelibs=more, this is mostly libmergedlo.so + URE + externals.
+#    Copying all .so/.dylib is safer than cherry-picking.
 # -----------------------------------------------------------
-echo "  Copying core libraries..."
-
-# Merged library (contains most of LibreOffice when --enable-mergelibs=more)
-cp -a "$INSTDIR"/program/libmergedlo.so* "$OUTPUT_DIR/lib/" 2>/dev/null || true
-cp -a "$INSTDIR"/program/libmergedlo.dylib* "$OUTPUT_DIR/lib/" 2>/dev/null || true
-
-# Essential individual libraries that may not be merged
-for lib in \
-    libuno_sal libuno_salhelpergcc3 libuno_cppu libuno_cppuhelpergcc3 \
-    libreglo libstorelo libunoidllo \
-    libjvmfwk libxmlreaderlo \
-    libicudata libicui18n libicuuc \
-    libxml2 libxslt libcairo libpixman \
-    libfontconfig libfreetype libharfbuzz libgraphite2 \
-    libpng libjpeg libtiff libexpat libcurl \
-    libnss3 libnssutil3 libnspr4 libplc4 libplds4 libsmime3 libssl3 \
-    libz \
-    ; do
-    # Try .so, .dylib patterns
-    cp -a "$INSTDIR"/program/${lib}*.so* "$OUTPUT_DIR/lib/" 2>/dev/null || true
-    cp -a "$INSTDIR"/program/${lib}*.dylib* "$OUTPUT_DIR/lib/" 2>/dev/null || true
-done
-
-# UNO component libraries (loaded via dlopen at runtime)
-echo "  Copying UNO component libraries..."
-for comp in \
-    configmgr i18npool i18nlangtag \
-    ucb1 ucpfile1 \
-    filterconfig1 pdffilter \
-    sax expwrap \
-    bootstrap deployment \
-    ; do
-    cp -a "$INSTDIR"/program/${comp}*.so* "$OUTPUT_DIR/lib/" 2>/dev/null || true
-    cp -a "$INSTDIR"/program/${comp}*.dylib* "$OUTPUT_DIR/lib/" 2>/dev/null || true
-done
+echo "  Copying libraries..."
+find "$INSTDIR/program" \( -name "*.so" -o -name "*.so.*" -o -name "*.dylib" \) \
+    -exec cp -a {} "$OUTPUT_DIR/program/" \;
 
 # -----------------------------------------------------------
-# UNO type registries (required for component loading)
+# 2. UNO type and service registries (required for component loading)
 # -----------------------------------------------------------
 echo "  Copying UNO registries..."
 cp -a "$INSTDIR"/program/types.rdb "$OUTPUT_DIR/program/" 2>/dev/null || true
-cp -a "$INSTDIR"/program/types/ "$OUTPUT_DIR/program/" 2>/dev/null || true
 cp -a "$INSTDIR"/program/services.rdb "$OUTPUT_DIR/program/" 2>/dev/null || true
-cp -a "$INSTDIR"/program/services/ "$OUTPUT_DIR/program/" 2>/dev/null || true
+# Some builds use subdirectories for split registries
+if [ -d "$INSTDIR/program/types" ]; then
+    cp -a "$INSTDIR/program/types" "$OUTPUT_DIR/program/"
+fi
+if [ -d "$INSTDIR/program/services" ]; then
+    cp -a "$INSTDIR/program/services" "$OUTPUT_DIR/program/"
+fi
 
 # -----------------------------------------------------------
-# Configuration (XCD files - required for bootstrap)
+# 3. Bootstrap RC files (required for LOKit initialization)
 # -----------------------------------------------------------
-echo "  Copying configuration..."
-mkdir -p "$OUTPUT_DIR/share/registry"
-cp -a "$INSTDIR"/share/registry/*.xcd "$OUTPUT_DIR/share/registry/" 2>/dev/null || true
+echo "  Copying bootstrap configuration..."
+for rc in fundamentalrc fundamental.ini versionrc version.ini \
+          bootstraprc bootstrap.ini unorc uno.ini loaborc saborc; do
+    cp -a "$INSTDIR/program/$rc" "$OUTPUT_DIR/program/" 2>/dev/null || true
+done
 
 # -----------------------------------------------------------
-# Filter definitions (required for format detection)
+# 4. Configuration (XCD files — required for UNO bootstrap)
+# -----------------------------------------------------------
+echo "  Copying XCD configuration..."
+if [ -d "$INSTDIR/share/registry" ]; then
+    mkdir -p "$OUTPUT_DIR/share/registry"
+    cp -a "$INSTDIR"/share/registry/*.xcd "$OUTPUT_DIR/share/registry/" 2>/dev/null || true
+fi
+
+# -----------------------------------------------------------
+# 5. Filter definitions (required for format detection/export)
 # -----------------------------------------------------------
 echo "  Copying filter definitions..."
 if [ -d "$INSTDIR/share/filter" ]; then
@@ -81,43 +80,48 @@ if [ -d "$INSTDIR/share/filter" ]; then
 fi
 
 # -----------------------------------------------------------
-# Fundamental RC files (bootstrap configuration)
+# 6. Misc share data that may be needed for rendering
 # -----------------------------------------------------------
-echo "  Copying bootstrap configuration..."
-cp -a "$INSTDIR"/program/fundamentalrc "$OUTPUT_DIR/program/" 2>/dev/null || true
-cp -a "$INSTDIR"/program/fundamental.ini "$OUTPUT_DIR/program/" 2>/dev/null || true
-cp -a "$INSTDIR"/program/versionrc "$OUTPUT_DIR/program/" 2>/dev/null || true
-cp -a "$INSTDIR"/program/version.ini "$OUTPUT_DIR/program/" 2>/dev/null || true
-cp -a "$INSTDIR"/program/bootstraprc "$OUTPUT_DIR/program/" 2>/dev/null || true
-cp -a "$INSTDIR"/program/bootstrap.ini "$OUTPUT_DIR/program/" 2>/dev/null || true
-cp -a "$INSTDIR"/program/unorc "$OUTPUT_DIR/program/" 2>/dev/null || true
-cp -a "$INSTDIR"/program/uno.ini "$OUTPUT_DIR/program/" 2>/dev/null || true
-
-# -----------------------------------------------------------
-# Font configuration
-# -----------------------------------------------------------
-echo "  Copying font configuration..."
+echo "  Copying share data..."
+# Fontconfig configuration
+if [ -d "$INSTDIR/share/config" ]; then
+    cp -a "$INSTDIR/share/config" "$OUTPUT_DIR/share/"
+fi
+# Color palettes (needed for chart/drawing color resolution)
+if [ -d "$INSTDIR/share/palette" ]; then
+    cp -a "$INSTDIR/share/palette" "$OUTPUT_DIR/share/"
+fi
+# Fonts (only present if --without-fonts was NOT used)
 if [ -d "$INSTDIR/share/fonts" ]; then
-    mkdir -p "$OUTPUT_DIR/share/fonts"
     cp -a "$INSTDIR/share/fonts" "$OUTPUT_DIR/share/"
 fi
 
 # -----------------------------------------------------------
-# Cleanup: strip binaries
+# 7. Remove executables we don't need (keep only libraries)
+# -----------------------------------------------------------
+echo "  Removing unnecessary executables..."
+for exe in soffice soffice.bin unopkg oosplash; do
+    rm -f "$OUTPUT_DIR/program/$exe"
+done
+
+# -----------------------------------------------------------
+# 8. Strip binaries to reduce size
 # -----------------------------------------------------------
 echo "  Stripping binaries..."
-find "$OUTPUT_DIR/lib" -name "*.so*" -exec strip --strip-unneeded {} \; 2>/dev/null || true
-find "$OUTPUT_DIR/lib" -name "*.dylib" -exec strip -x {} \; 2>/dev/null || true
+find "$OUTPUT_DIR/program" -name "*.so" -exec strip --strip-unneeded {} \; 2>/dev/null || true
+find "$OUTPUT_DIR/program" -name "*.so.*" -exec strip --strip-unneeded {} \; 2>/dev/null || true
+find "$OUTPUT_DIR/program" -name "*.dylib" -exec strip -x {} \; 2>/dev/null || true
 
 # -----------------------------------------------------------
 # Report
 # -----------------------------------------------------------
 echo ""
 echo "=== Artifact Summary ==="
-LIB_COUNT=$(find "$OUTPUT_DIR/lib" -name "*.so*" -o -name "*.dylib" | wc -l)
+LIB_COUNT=$(find "$OUTPUT_DIR/program" \( -name "*.so" -o -name "*.so.*" -o -name "*.dylib" \) | wc -l)
 echo "Libraries: $LIB_COUNT"
+echo ""
 echo "Total size:"
 du -sh "$OUTPUT_DIR"
 echo ""
 echo "Breakdown:"
-du -sh "$OUTPUT_DIR"/*
+du -sh "$OUTPUT_DIR"/* 2>/dev/null || true

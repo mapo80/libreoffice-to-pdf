@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- This is a packaging-only project: no code, just native assets -->
+    <TargetFramework>net8.0</TargetFramework>
+    <NoBuild>true</NoBuild>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+
+    <!-- NuGet metadata -->
+    <PackageId>SlimLO.Native.$(RuntimeIdentifier)</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>SlimLO Contributors</Authors>
+    <Description>Native runtime for SlimLO PDF conversion library ($(RuntimeIdentifier)). Contains LibreOffice headless engine and SlimLO C API.</Description>
+    <PackageLicenseExpression>MPL-2.0</PackageLicenseExpression>
+    <PackageTags>pdf;conversion;libreoffice;native;$(RuntimeIdentifier)</PackageTags>
+    <RepositoryType>git</RepositoryType>
+  </PropertyGroup>
+
+  <!--
+    Native assets are packed into runtimes/{rid}/native/ within the NuGet package.
+    The managed SlimLO package references this and loads them at runtime.
+
+    To pack:
+      dotnet pack -p:RuntimeIdentifier=linux-x64 -p:NativeDir=../../output/
+  -->
+  <PropertyGroup>
+    <NativeDir Condition="'$(NativeDir)' == ''">../../output/</NativeDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="$(NativeDir)program/**/*.so" PackagePath="runtimes/$(RuntimeIdentifier)/native/" />
+    <Content Include="$(NativeDir)program/**/*.so.*" PackagePath="runtimes/$(RuntimeIdentifier)/native/" />
+    <Content Include="$(NativeDir)program/**/*.dylib" PackagePath="runtimes/$(RuntimeIdentifier)/native/" />
+    <Content Include="$(NativeDir)program/**/*.dll" PackagePath="runtimes/$(RuntimeIdentifier)/native/" />
+    <!-- UNO registries and config -->
+    <Content Include="$(NativeDir)program/*.rdb" PackagePath="runtimes/$(RuntimeIdentifier)/native/" />
+    <Content Include="$(NativeDir)program/*rc" PackagePath="runtimes/$(RuntimeIdentifier)/native/" />
+    <Content Include="$(NativeDir)program/*.ini" PackagePath="runtimes/$(RuntimeIdentifier)/native/" />
+    <!-- Share data (XCD config, filters, etc.) -->
+    <Content Include="$(NativeDir)share/**" PackagePath="runtimes/$(RuntimeIdentifier)/native/share/" />
+  </ItemGroup>
+
+</Project>

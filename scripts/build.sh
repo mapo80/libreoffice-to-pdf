@@ -88,8 +88,8 @@ if [ -f "$PROJECT_DIR/slimlo-api/CMakeLists.txt" ]; then
     # Copy library to output
     find "$PROJECT_DIR/slimlo-api/build" \
         \( -name "libslimlo.so" -o -name "libslimlo.dylib" -o -name "slimlo.dll" \) \
-        -exec cp {} "$OUTPUT_DIR/lib/" \;
-    echo "    SlimLO C API built and copied to $OUTPUT_DIR/lib/"
+        -exec cp {} "$OUTPUT_DIR/program/" \;
+    echo "    SlimLO C API built and copied to $OUTPUT_DIR/program/"
 else
     echo "    WARNING: slimlo-api/CMakeLists.txt not found, skipping C API build"
 fi

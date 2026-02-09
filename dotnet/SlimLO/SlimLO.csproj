@@ -16,4 +16,10 @@
     <RepositoryType>git</RepositoryType>
   </PropertyGroup>
 
+  <!-- Ship MSBuild .targets to consumers so native assets get copied to output -->
+  <ItemGroup>
+    <None Include="build\SlimLO.targets" Pack="true" PackagePath="build\" />
+    <None Include="buildTransitive\SlimLO.targets" Pack="true" PackagePath="buildTransitive\" />
+  </ItemGroup>
+
 </Project>

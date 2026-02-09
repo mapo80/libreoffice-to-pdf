@@ -1,12 +1,17 @@
 # Dockerfile.linux-x64 — Build SlimLO from LibreOffice source
 # Based on Collabora Online from-source pattern (Ubuntu 24.04)
 #
-# Usage:
-#   docker build -f docker/Dockerfile.linux-x64 -t slimlo-builder .
-#   docker run -v $(pwd)/output:/output slimlo-builder
+# Build:
+#   docker build -f docker/Dockerfile.linux-x64 -t slimlo-build .
 #
-# With ccache (recommended for rebuilds):
-#   docker run -v $(pwd)/output:/output -v slimlo-ccache:/ccache slimlo-builder
+# Extract artifacts:
+#   docker run --rm -v $(pwd)/output:/output slimlo-build
+#
+# With ccache volume (recommended — saves hours on rebuild):
+#   DOCKER_BUILDKIT=1 docker build -f docker/Dockerfile.linux-x64 -t slimlo-build .
+#
+# Build only the runtime image (for deployment):
+#   docker build -f docker/Dockerfile.linux-x64 --target runtime -t slimlo .
 
 # ============================================================
 # Stage 1: Build environment with all dependencies
@@ -14,6 +19,12 @@
 FROM ubuntu:24.04 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
+
+# Enable source repositories (required for `apt build-dep`)
+# Ubuntu 24.04 uses deb822 format in /etc/apt/sources.list.d/
+RUN sed -i 's/^# deb-src/deb-src/' /etc/apt/sources.list 2>/dev/null || true && \
+    sed -i '/^Types: deb$/s/$/\nTypes: deb-src/' /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || \
+    sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
 
 # Install build dependencies
 # `apt build-dep libreoffice` pulls ALL compile-time dependencies automatically
@@ -29,61 +40,53 @@ ENV CCACHE_DIR=/ccache \
     CCACHE_COMPRESS=1 \
     CCACHE_MAXSIZE=32G
 
-# Copy project files
 WORKDIR /build
+
+# Copy project files (ordered by change frequency for layer caching)
 COPY LO_VERSION .
+COPY distro-configs/ distro-configs/
 COPY patches/ patches/
 COPY scripts/ scripts/
-COPY distro-configs/ distro-configs/
 COPY slimlo-api/ slimlo-api/
 
-# Make scripts executable
-RUN chmod +x scripts/*.sh
+RUN chmod +x scripts/*.sh patches/*.sh
 
-# Clone LibreOffice source
+# Clone LibreOffice source (shallow clone — fast)
 RUN LO_VERSION=$(cat LO_VERSION | tr -d '[:space:]') && \
-    echo "Cloning LibreOffice $LO_VERSION..." && \
+    echo "=== Cloning LibreOffice $LO_VERSION ===" && \
     git clone --depth 1 --branch "$LO_VERSION" \
         https://github.com/LibreOffice/core.git lo-src
 
-# Apply patches
-RUN ./scripts/apply-patches.sh lo-src
+# Apply SlimLO patches
+RUN echo "=== Applying patches ===" && \
+    ./scripts/apply-patches.sh lo-src
 
-# Copy distro config into LO source tree
-RUN cp distro-configs/SlimLO.conf lo-src/distro-configs/SlimLO.conf
+# Configure with SlimLO profile
+RUN echo "=== Configuring ===" && \
+    cd lo-src && ./autogen.sh --with-distro=SlimLO
 
-# Configure
-RUN cd lo-src && ./autogen.sh --with-distro=SlimLO
-
-# Build (use ccache mount for faster rebuilds)
+# Build (this is the long step — ~2-4 hours on first run)
+# ccache mount persists across builds for faster rebuilds
 RUN --mount=type=cache,target=/ccache \
+    echo "=== Building ===" && \
     cd lo-src && make build-nocheck -j$(nproc)
 
-# Build SlimLO C API (if CMakeLists.txt exists)
-RUN if [ -f slimlo-api/CMakeLists.txt ]; then \
-        cmake -S slimlo-api -B slimlo-api/build \
-              -DINSTDIR=/build/lo-src/instdir \
-              -DCMAKE_BUILD_TYPE=Release && \
-        cmake --build slimlo-api/build -j$(nproc); \
-    fi
+# Build SlimLO C API wrapper (links against LO libraries)
+RUN echo "=== Building C API ===" && \
+    cmake -S slimlo-api -B slimlo-api/build \
+          -DINSTDIR=/build/lo-src/instdir \
+          -DCMAKE_BUILD_TYPE=Release && \
+    cmake --build slimlo-api/build -j$(nproc)
 
-# Extract minimal artifacts
-RUN mkdir -p /output && \
-    ./scripts/extract-artifacts.sh lo-src/instdir /output
-
-# Copy C API library if built
-RUN if [ -d slimlo-api/build ]; then \
-        find slimlo-api/build -name "libslimlo.so" -exec cp {} /output/lib/ \; ; \
-    fi
-
-# Copy the C API header
-RUN if [ -f slimlo-api/include/slimlo.h ]; then \
-        mkdir -p /output/include && \
-        cp slimlo-api/include/slimlo.h /output/include/; \
-    fi
+# Extract minimal artifacts from instdir
+RUN echo "=== Extracting artifacts ===" && \
+    ./scripts/extract-artifacts.sh lo-src/instdir /artifacts && \
+    cp slimlo-api/build/libslimlo.so /artifacts/program/ && \
+    mkdir -p /artifacts/include && \
+    cp slimlo-api/include/slimlo.h /artifacts/include/
 
 # ============================================================
-# Stage 2: Minimal runtime image (for testing / distribution)
+# Stage 2: Minimal runtime image (for deployment / testing)
 # ============================================================
 FROM ubuntu:24.04 AS runtime
 
@@ -96,19 +99,23 @@ RUN apt-get update && apt-get -y install --no-install-recommends \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /output /opt/slimlo
+COPY --from=builder /artifacts /opt/slimlo
 
-ENV LD_LIBRARY_PATH=/opt/slimlo/lib
+ENV LD_LIBRARY_PATH=/opt/slimlo/program
 ENV SLIMLO_RESOURCE_PATH=/opt/slimlo
 
-# Verify the build
-RUN ls -la /opt/slimlo/lib/ && \
-    echo "SlimLO runtime image ready"
+RUN echo "=== SlimLO runtime image ready ===" && \
+    ls -la /opt/slimlo/program/libmergedlo* 2>/dev/null && \
+    ls -la /opt/slimlo/program/libslimlo* 2>/dev/null && \
+    du -sh /opt/slimlo/
+
+# Default: output artifact size and list
+CMD ["sh", "-c", "echo 'SlimLO runtime' && du -sh /opt/slimlo/ && ls /opt/slimlo/program/*.so 2>/dev/null | head -20"]
 
 # ============================================================
-# Stage 3: Output extractor (copies artifacts to host volume)
+# Stage 3: Artifact extractor (copies to host-mounted volume)
+# Default target — `docker run -v $(pwd)/output:/output slimlo-build`
 # ============================================================
-FROM builder AS output-extractor
+FROM builder AS extractor
 
-# Default command: copy output to mounted volume
-CMD ["sh", "-c", "cp -a /output/* /host-output/ && echo 'Artifacts copied to /host-output/' && du -sh /host-output/"]
+CMD ["sh", "-c", "cp -a /artifacts/* /output/ && echo '=== Artifacts copied to /output/ ===' && du -sh /output/"]

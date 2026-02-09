@@ -1,0 +1,31 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <!--
+    SlimLO.targets — Copies native runtime assets to the output directory.
+
+    The SlimLO.Native.{rid} NuGet packages place native libraries under
+    runtimes/{rid}/native/. This targets file ensures they get copied to the
+    application's output directory at build time, and that share/ resources
+    (XCD config, filter definitions) are also available.
+
+    For consumers:
+      Install SlimLO + SlimLO.Native.linux-x64 (or your platform).
+      Native files will be copied to your bin/ automatically.
+  -->
+  <PropertyGroup>
+    <SlimLORuntimeDir Condition="'$(SlimLORuntimeDir)' == ''">$(NuGetPackageRoot)slimlo.native.$(RuntimeIdentifier)\$(SlimLONativeVersion)\runtimes\$(RuntimeIdentifier)\native\</SlimLORuntimeDir>
+  </PropertyGroup>
+
+  <ItemGroup Condition="Exists('$(SlimLORuntimeDir)')">
+    <!-- Copy all native libraries -->
+    <None Include="$(SlimLORuntimeDir)*.so" CopyToOutputDirectory="PreserveNewest" Link="%(Filename)%(Extension)" />
+    <None Include="$(SlimLORuntimeDir)*.so.*" CopyToOutputDirectory="PreserveNewest" Link="%(Filename)%(Extension)" />
+    <None Include="$(SlimLORuntimeDir)*.dylib" CopyToOutputDirectory="PreserveNewest" Link="%(Filename)%(Extension)" />
+    <None Include="$(SlimLORuntimeDir)*.dll" CopyToOutputDirectory="PreserveNewest" Link="%(Filename)%(Extension)" />
+    <!-- Copy UNO registries and config -->
+    <None Include="$(SlimLORuntimeDir)*.rdb" CopyToOutputDirectory="PreserveNewest" Link="%(Filename)%(Extension)" />
+    <None Include="$(SlimLORuntimeDir)*rc" CopyToOutputDirectory="PreserveNewest" Link="%(Filename)%(Extension)" />
+    <None Include="$(SlimLORuntimeDir)*.ini" CopyToOutputDirectory="PreserveNewest" Link="%(Filename)%(Extension)" />
+    <!-- Copy share/ resources -->
+    <None Include="$(SlimLORuntimeDir)share\**" CopyToOutputDirectory="PreserveNewest" Link="share\%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>
