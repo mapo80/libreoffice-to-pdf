@@ -1,0 +1,114 @@
+# Dockerfile.linux-x64 — Build SlimLO from LibreOffice source
+# Based on Collabora Online from-source pattern (Ubuntu 24.04)
+#
+# Usage:
+#   docker build -f docker/Dockerfile.linux-x64 -t slimlo-builder .
+#   docker run -v $(pwd)/output:/output slimlo-builder
+#
+# With ccache (recommended for rebuilds):
+#   docker run -v $(pwd)/output:/output -v slimlo-ccache:/ccache slimlo-builder
+
+# ============================================================
+# Stage 1: Build environment with all dependencies
+# ============================================================
+FROM ubuntu:24.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install build dependencies
+# `apt build-dep libreoffice` pulls ALL compile-time dependencies automatically
+RUN apt-get update && apt-get -y install \
+        build-essential git autoconf automake libtool pkg-config \
+        ccache nasm flex bison gperf zip unzip wget python3 \
+        cmake \
+    && apt-get -y build-dep libreoffice \
+    && rm -rf /var/lib/apt/lists/*
+
+# ccache configuration
+ENV CCACHE_DIR=/ccache \
+    CCACHE_COMPRESS=1 \
+    CCACHE_MAXSIZE=32G
+
+# Copy project files
+WORKDIR /build
+COPY LO_VERSION .
+COPY patches/ patches/
+COPY scripts/ scripts/
+COPY distro-configs/ distro-configs/
+COPY slimlo-api/ slimlo-api/
+
+# Make scripts executable
+RUN chmod +x scripts/*.sh
+
+# Clone LibreOffice source
+RUN LO_VERSION=$(cat LO_VERSION | tr -d '[:space:]') && \
+    echo "Cloning LibreOffice $LO_VERSION..." && \
+    git clone --depth 1 --branch "$LO_VERSION" \
+        https://github.com/LibreOffice/core.git lo-src
+
+# Apply patches
+RUN ./scripts/apply-patches.sh lo-src
+
+# Copy distro config into LO source tree
+RUN cp distro-configs/SlimLO.conf lo-src/distro-configs/SlimLO.conf
+
+# Configure
+RUN cd lo-src && ./autogen.sh --with-distro=SlimLO
+
+# Build (use ccache mount for faster rebuilds)
+RUN --mount=type=cache,target=/ccache \
+    cd lo-src && make build-nocheck -j$(nproc)
+
+# Build SlimLO C API (if CMakeLists.txt exists)
+RUN if [ -f slimlo-api/CMakeLists.txt ]; then \
+        cmake -S slimlo-api -B slimlo-api/build \
+              -DINSTDIR=/build/lo-src/instdir \
+              -DCMAKE_BUILD_TYPE=Release && \
+        cmake --build slimlo-api/build -j$(nproc); \
+    fi
+
+# Extract minimal artifacts
+RUN mkdir -p /output && \
+    ./scripts/extract-artifacts.sh lo-src/instdir /output
+
+# Copy C API library if built
+RUN if [ -d slimlo-api/build ]; then \
+        find slimlo-api/build -name "libslimlo.so" -exec cp {} /output/lib/ \; ; \
+    fi
+
+# Copy the C API header
+RUN if [ -f slimlo-api/include/slimlo.h ]; then \
+        mkdir -p /output/include && \
+        cp slimlo-api/include/slimlo.h /output/include/; \
+    fi
+
+# ============================================================
+# Stage 2: Minimal runtime image (for testing / distribution)
+# ============================================================
+FROM ubuntu:24.04 AS runtime
+
+RUN apt-get update && apt-get -y install --no-install-recommends \
+        libfontconfig1 libfreetype6 libcairo2 \
+        libpng16-16t64 libjpeg-turbo8 \
+        libxml2 libxslt1.1 \
+        libicu74 \
+        fonts-liberation fonts-dejavu-core \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /output /opt/slimlo
+
+ENV LD_LIBRARY_PATH=/opt/slimlo/lib
+ENV SLIMLO_RESOURCE_PATH=/opt/slimlo
+
+# Verify the build
+RUN ls -la /opt/slimlo/lib/ && \
+    echo "SlimLO runtime image ready"
+
+# ============================================================
+# Stage 3: Output extractor (copies artifacts to host volume)
+# ============================================================
+FROM builder AS output-extractor
+
+# Default command: copy output to mounted volume
+CMD ["sh", "-c", "cp -a /output/* /host-output/ && echo 'Artifacts copied to /host-output/' && du -sh /host-output/"]

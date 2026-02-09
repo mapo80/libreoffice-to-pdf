@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <!-- Package metadata -->
+    <PackageId>SlimLO</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>SlimLO Contributors</Authors>
+    <Description>Lightweight PDF conversion library for OOXML documents (docx, xlsx, pptx). Built on LibreOffice's rendering engine.</Description>
+    <PackageLicenseExpression>MPL-2.0</PackageLicenseExpression>
+    <PackageTags>pdf;conversion;docx;xlsx;pptx;libreoffice</PackageTags>
+    <RepositoryType>git</RepositoryType>
+  </PropertyGroup>
+
+</Project>
