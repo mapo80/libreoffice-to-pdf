@@ -66,6 +66,11 @@ COPY patches/ patches/
 
 RUN chmod +x scripts/*.sh patches/*.sh
 
+# ARG that changes when scripts/ content changes, forcing RUN cache invalidation.
+# Usage: docker build --build-arg SCRIPTS_HASH=$(cat scripts/*.sh | sha256sum | cut -d' ' -f1) ...
+# If not provided, Docker may cache the RUN layer even when scripts change.
+ARG SCRIPTS_HASH=default
+
 # --- Clone + Patch + Configure + Build in a SINGLE RUN ---
 # All operations that use the lo-src cache mount MUST be in one RUN.
 # BuildKit cache mounts may not persist across separate RUN instructions
