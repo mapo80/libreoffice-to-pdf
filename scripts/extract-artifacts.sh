@@ -1,19 +1,11 @@
 #!/bin/bash
 # extract-artifacts.sh — Extract only necessary files from LibreOffice instdir
-# This reduces the output from ~300MB to the minimum needed for PDF conversion.
+# Super Slim: only DOCX→PDF conversion, no Calc/Impress/Math.
 #
-# LibreOffice instdir/ structure (after build):
-#   program/        — libraries (.so/.dylib), executables, UNO registries, RC files
-#   share/registry/ — XCD configuration files (required for bootstrap)
-#   share/config/   — misc config (fontconfig, etc.)
-#   share/filter/   — filter definitions (format detection)
-#   share/palette/  — color palettes (may be needed for chart rendering)
-#   share/fonts/    — bundled fonts (excluded with --without-fonts)
-#   share/gallery/  — galleries (excluded with --without-galleries)
-#   share/template/ — templates (excluded with --without-templates)
-#
-# With --enable-mergelibs=more, almost all code is in libmergedlo.so.
-# Only URE libraries and some external dependencies remain separate.
+# With --enable-mergelibs, most code is in libmergedlo.so.
+# Stub .so files (21-byte "invalid - merged lib") are kept — UNO needs them.
+# Only Writer + core libraries are kept; Calc/Impress/Math/VBA removed.
+# soffice.cfg/ pruned to Writer-only (removes ~25 MB of UI toolbar/menu XML).
 set -euo pipefail
 
 INSTDIR="${1:?Usage: extract-artifacts.sh <instdir> <output-dir>}"
@@ -80,14 +72,23 @@ if [ -d "$INSTDIR/share/filter" ]; then
 fi
 
 # -----------------------------------------------------------
-# 6. Misc share data that may be needed for rendering
+# 6. Misc share data
 # -----------------------------------------------------------
 echo "  Copying share data..."
-# Fontconfig configuration
+# Config directory — copy all, then prune non-essential soffice.cfg modules
 if [ -d "$INSTDIR/share/config" ]; then
     cp -a "$INSTDIR/share/config" "$OUTPUT_DIR/share/"
+    # Remove soffice.cfg modules not needed for DOCX→PDF (saves ~25 MB)
+    for mod in scalc simpress sdraw schart smath sglobal BasicIDE \
+               swxform swform swreport sweb sabpilot scanner StartModule; do
+        rm -rf "$OUTPUT_DIR/share/config/soffice.cfg/modules/$mod"
+    done
+    # Remove CUI dialogs config (4 MB — UI only)
+    rm -rf "$OUTPUT_DIR/share/config/soffice.cfg/cui"
+    # Remove Impress config
+    rm -rf "$OUTPUT_DIR/share/config/soffice.cfg/simpress"
 fi
-# Color palettes (needed for chart/drawing color resolution)
+# Color palettes
 if [ -d "$INSTDIR/share/palette" ]; then
     cp -a "$INSTDIR/share/palette" "$OUTPUT_DIR/share/"
 fi
@@ -106,18 +107,49 @@ else
 fi
 
 # -----------------------------------------------------------
-# 7. Remove executables and UI-only libraries we don't need
+# 7. Remove executables we don't need
 # -----------------------------------------------------------
 echo "  Removing unnecessary executables..."
 for exe in soffice soffice.bin unopkg oosplash; do
     rm -f "$OUTPUT_DIR/program/$exe"
 done
 
-# Remove UI dialog libraries (not needed for headless PDF conversion)
-echo "  Removing UI-only libraries..."
-for uilib in libswuilo libscuilo libsduilo libdeploymentguilo; do
-    rm -f "$OUTPUT_DIR/program/${uilib}.so"
-    rm -f "$OUTPUT_DIR/program/${uilib}.dylib"
+# -----------------------------------------------------------
+# 7a. Stub .so files ("invalid - merged lib" placeholders)
+#     These are 21-byte text files created by --enable-mergelibs.
+#     UNO component loader checks for file existence before falling
+#     back to the merged lib, so we keep them (~1.7 KB total).
+# -----------------------------------------------------------
+
+# -----------------------------------------------------------
+# 7b. Remove libraries not needed for DOCX→PDF conversion
+# -----------------------------------------------------------
+echo "  Removing non-essential libraries..."
+for lib in \
+    libsclo libsdlo libscfiltlo libslideshowlo libscdlo libsddlo \
+    libPresentationMinimizerlo \
+    libcuilo \
+    libswuilo libscuilo libsduilo libdeploymentguilo \
+    libvbaobjlo libvbaswobjlo \
+    liblocaledata_others liblocaledata_euro liblocaledata_es \
+    libsmlo libsmdlo \
+    libbiblo \
+    libanalysislo libdatelo libpricinglo libsolverlo \
+    libucpdav1 libcmdmaillo \
+    libmigrationoo2lo libmigrationoo3lo \
+    libabplo libLanguageToollo libscnlo \
+    libtextconversiondlgslo libanimcorelo libicglo \
+; do
+    rm -f "$OUTPUT_DIR/program/${lib}.so"
+    rm -f "$OUTPUT_DIR/program/${lib}.dylib"
+done
+
+# -----------------------------------------------------------
+# 7c. Remove XCD config for unused modules
+# -----------------------------------------------------------
+echo "  Removing unused XCD files..."
+for xcd in math base xsltfilter ogltrans ctlseqcheck cjk; do
+    rm -f "$OUTPUT_DIR/share/registry/${xcd}.xcd"
 done
 
 # -----------------------------------------------------------
