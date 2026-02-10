@@ -70,15 +70,5 @@ for target in "${TARGETS_TO_STRIP[@]}"; do
     fi
 done
 
-# Also strip the l10n and screenshot targets for SlimLO
-# These are in separate gb_Module_add_l10n_targets and gb_Module_add_screenshot_targets blocks
-# We can wrap the entire l10n block
-if grep -q 'gb_Module_add_l10n_targets,filter' "$MODULE_FILTER"; then
-    sed "s|^\$(eval \$(call gb_Module_add_l10n_targets,filter,|\$(if \$(ENABLE_SLIMLO),,\$(eval \$(call gb_Module_add_l10n_targets,filter,|" "$MODULE_FILTER" > "$MODULE_FILTER.tmp" && mv "$MODULE_FILTER.tmp" "$MODULE_FILTER"
-    # Close the wrapping: add closing paren after the block
-    sed "s|^	AllLangMoTarget_flt \\\\|	AllLangMoTarget_flt \\\\|" "$MODULE_FILTER" > "$MODULE_FILTER.tmp" && mv "$MODULE_FILTER.tmp" "$MODULE_FILTER"
-    echo "    Note: l10n targets kept as-is (harmless to include)"
-fi
-
 rm -f "$MODULE_FILTER.bak"
 echo "    Patch 004 complete"

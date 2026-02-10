@@ -29,14 +29,20 @@ AC_ARG_ENABLE(slimlo,\
 fi
 
 # ---------------------------------------------------------------
-# 2. Add the SlimLO stripping block (before the wasm_strip block)
+# 2. Add/update the SlimLO stripping block (before the wasm_strip block)
+#    ALWAYS remove + re-insert so changes to this block take effect
+#    even when re-running on an already-patched source tree.
 # ---------------------------------------------------------------
-if grep -q 'enable_slimlo' "$CONFIGURE"; then
-    echo "    SlimLO strip block already exists (skipping)"
-else
-    # Find the line "if test "$enable_wasm_strip" = "yes"; then"
-    # and insert our block BEFORE it
-    SLIMLO_BLOCK='# SlimLO: minimal headless PDF conversion build.\
+
+# Remove old slimlo block if present (from "# SlimLO:" comment to its closing "fi")
+if grep -q '# SlimLO: minimal headless' "$CONFIGURE"; then
+    sed -i.bak '/^# SlimLO: minimal headless/,/^fi$/d' "$CONFIGURE"
+    rm -f "$CONFIGURE.bak"
+    echo "    Removed old SlimLO strip block"
+fi
+
+# Define the current block
+SLIMLO_BLOCK='# SlimLO: minimal headless PDF conversion build.\
 # Disables everything not needed for OOXML -> PDF conversion.\
 if test "$enable_slimlo" = "yes"; then\
     enable_avmedia=no\
@@ -60,7 +66,6 @@ if test "$enable_slimlo" = "yes"; then\
     enable_pdfimport=no\
     enable_randr=no\
     enable_report_builder=no\
-    enable_scripting=no\
     enable_sdremote=no\
     enable_sdremote_bluetooth=no\
     enable_skia=no\
@@ -77,12 +82,11 @@ if test "$enable_slimlo" = "yes"; then\
 fi\
 '
 
-    # Insert before the wasm_strip block
-    sed -i.bak "/^if test \"\$enable_wasm_strip\" = \"yes\"; then/i\\
+# Insert before the wasm_strip block
+sed -i.bak "/^if test \"\$enable_wasm_strip\" = \"yes\"; then/i\\
 $SLIMLO_BLOCK" "$CONFIGURE"
-    rm -f "$CONFIGURE.bak"
-    echo "    Added SlimLO strip block to configure.ac"
-fi
+rm -f "$CONFIGURE.bak"
+echo "    Inserted SlimLO strip block into configure.ac"
 
 # ---------------------------------------------------------------
 # 3. Add AC_SUBST(ENABLE_SLIMLO) near the WASM ones

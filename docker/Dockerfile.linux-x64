@@ -1,92 +1,149 @@
 # Dockerfile.linux-x64 — Build SlimLO from LibreOffice source
-# Based on Collabora Online from-source pattern (Ubuntu 24.04)
+# Uses BuildKit cache mounts to enable INCREMENTAL rebuilds.
+#
+# How caching works:
+#   - lo-src cache: persists the cloned LO source + compiled objects (workdir/).
+#     When patches or config change, `make` only recompiles affected files.
+#   - ccache: persists compiler cache for even faster recompilation.
+#   - All cache-using operations are in a SINGLE RUN to guarantee consistency.
 #
 # Build:
-#   docker build -f docker/Dockerfile.linux-x64 -t slimlo-build .
+#   DOCKER_BUILDKIT=1 docker build -f docker/Dockerfile.linux-x64 -t slimlo-build .
 #
 # Extract artifacts:
 #   docker run --rm -v $(pwd)/output:/output slimlo-build
 #
-# With ccache volume (recommended — saves hours on rebuild):
-#   DOCKER_BUILDKIT=1 docker build -f docker/Dockerfile.linux-x64 -t slimlo-build .
-#
 # Build only the runtime image (for deployment):
 #   docker build -f docker/Dockerfile.linux-x64 --target runtime -t slimlo .
+#
+# Force full rebuild (clear caches):
+#   docker builder prune --filter type=exec.cachemount
 
 # ============================================================
-# Stage 1: Build environment with all dependencies
+# Stage 1: Build dependencies (changes rarely → stable layer)
 # ============================================================
-FROM ubuntu:24.04 AS builder
+FROM ubuntu:24.04 AS deps
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Enable source repositories (required for `apt build-dep`)
-# Ubuntu 24.04 uses deb822 format in /etc/apt/sources.list.d/
-RUN sed -i 's/^# deb-src/deb-src/' /etc/apt/sources.list 2>/dev/null || true && \
-    sed -i '/^Types: deb$/s/$/\nTypes: deb-src/' /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || \
-    sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
+# Ubuntu 24.04 uses deb822 format: change "Types: deb" to "Types: deb deb-src"
+RUN sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources
 
 # Install build dependencies
-# `apt build-dep libreoffice` pulls ALL compile-time dependencies automatically
+# Firebird packages may be broken/missing on arm64 — create dummy packages
+# with equivs to satisfy the dependency (we disable Firebird SDBC anyway).
 RUN apt-get update && apt-get -y install \
         build-essential git autoconf automake libtool pkg-config \
-        ccache nasm flex bison gperf zip unzip wget python3 \
-        cmake \
+        ccache nasm flex bison gperf zip unzip wget \
+        python3 python3-setuptools \
+        cmake meson ninja-build equivs \
+    && printf 'Section: libs\nPackage: libfbclient2\nProvides: libfbclient2\nDescription: dummy\n' | equivs-build - \
+    && printf 'Section: libs\nPackage: firebird-dev\nProvides: firebird-dev\nDescription: dummy\n' | equivs-build - \
+    && printf 'Section: libs\nPackage: firebird3.0-server-core\nProvides: firebird3.0-server-core\nDescription: dummy\n' | equivs-build - \
+    && dpkg -i libfbclient2_1.0_all.deb firebird-dev_1.0_all.deb firebird3.0-server-core_1.0_all.deb \
+    && rm -f *.deb \
     && apt-get -y build-dep libreoffice \
     && rm -rf /var/lib/apt/lists/*
 
-# ccache configuration
+# ============================================================
+# Stage 2: Build LibreOffice + SlimLO
+# ============================================================
+FROM deps AS builder
+
 ENV CCACHE_DIR=/ccache \
     CCACHE_COMPRESS=1 \
     CCACHE_MAXSIZE=32G
 
 WORKDIR /build
 
-# Copy project files (ordered by change frequency for layer caching)
+# Copy project files ordered by change frequency (least → most).
 COPY LO_VERSION .
+COPY slimlo-api/ slimlo-api/
+COPY scripts/ scripts/
 COPY distro-configs/ distro-configs/
 COPY patches/ patches/
-COPY scripts/ scripts/
-COPY slimlo-api/ slimlo-api/
 
 RUN chmod +x scripts/*.sh patches/*.sh
 
-# Clone LibreOffice source (shallow clone — fast)
-RUN LO_VERSION=$(cat LO_VERSION | tr -d '[:space:]') && \
-    echo "=== Cloning LibreOffice $LO_VERSION ===" && \
-    git clone --depth 1 --branch "$LO_VERSION" \
-        https://github.com/LibreOffice/core.git lo-src
-
-# Apply SlimLO patches
-RUN echo "=== Applying patches ===" && \
-    ./scripts/apply-patches.sh lo-src
-
-# Configure with SlimLO profile
-RUN echo "=== Configuring ===" && \
-    cd lo-src && ./autogen.sh --with-distro=SlimLO
-
-# Build (this is the long step — ~2-4 hours on first run)
-# ccache mount persists across builds for faster rebuilds
-RUN --mount=type=cache,target=/ccache \
-    echo "=== Building ===" && \
-    cd lo-src && make build-nocheck -j$(nproc)
-
-# Build SlimLO C API wrapper (links against LO libraries)
-RUN echo "=== Building C API ===" && \
+# --- Clone + Patch + Configure + Build in a SINGLE RUN ---
+# All operations that use the lo-src cache mount MUST be in one RUN.
+# BuildKit cache mounts may not persist across separate RUN instructions
+# after an OOM or build failure.
+#
+# The lo-src cache persists:
+#   - cloned source (skip re-clone on rebuild)
+#   - workdir/ with compiled objects (incremental make)
+# The ccache persists compiler cache for recompilation.
+#
+# On rebuild after patch/config change:
+#   1. Clone: skipped (source already in cache)
+#   2. Patches: re-applied (idempotent)
+#   3. Configure: re-run (regenerates makefiles)
+#   4. Make: incremental (only recompiles changed files)
+RUN --mount=type=cache,target=/build/lo-src \
+    --mount=type=cache,target=/ccache \
+    set -ex && \
+    LO_VERSION=$(cat LO_VERSION | tr -d '[:space:]') && \
+    # --- Clone if needed ---
+    # Logic:
+    #   .git missing          → fresh clone needed
+    #   .git exists, no marker → assume correct (preserves compiled objects!)
+    #   marker matches         → skip clone
+    #   marker doesn't match   → version changed, re-clone
+    NEEDS_CLONE=false && \
+    if [ ! -d "lo-src/.git" ] || [ ! -f "lo-src/configure.ac" ]; then \
+        NEEDS_CLONE=true; \
+    elif [ -f "lo-src/.slimlo-version" ]; then \
+        CACHED_VER=$(cat lo-src/.slimlo-version) && \
+        if [ "$CACHED_VER" != "$LO_VERSION" ]; then \
+            NEEDS_CLONE=true; \
+        fi; \
+    fi && \
+    if [ "$NEEDS_CLONE" = "true" ]; then \
+        echo "=== Cloning LibreOffice $LO_VERSION ===" && \
+        find lo-src -mindepth 1 -delete 2>/dev/null || true && \
+        git clone --depth 1 --branch "$LO_VERSION" \
+            https://github.com/LibreOffice/core.git lo-src; \
+    else \
+        echo "=== Source already cached ==="; \
+    fi && \
+    echo "$LO_VERSION" > lo-src/.slimlo-version && \
+    # --- Patch + Configure (only if config/patches changed) ---
+    # Hash all inputs that affect configure: distro config + patch scripts.
+    # If hash matches cached value, skip patching + autogen entirely
+    # (preserves timestamps → make stays incremental).
+    CONFIG_HASH=$(cat distro-configs/SlimLO.conf patches/*.sh | sha256sum | cut -d' ' -f1) && \
+    if [ -f "lo-src/.slimlo-config-hash" ] && \
+       [ "$(cat lo-src/.slimlo-config-hash)" = "$CONFIG_HASH" ] && \
+       [ -f "lo-src/config_host.mk" ]; then \
+        echo "=== Config unchanged, skipping patches + autogen ==="; \
+    else \
+        echo "=== Config changed, re-patching and reconfiguring ===" && \
+        mkdir -p lo-src/distro-configs && \
+        cp distro-configs/SlimLO.conf lo-src/distro-configs/SlimLO.conf && \
+        ./scripts/apply-patches.sh lo-src && \
+        cd lo-src && ./autogen.sh --with-distro=SlimLO && cd /build && \
+        # Force re-link of merged lib (ldflags change not detected by make)
+        rm -f lo-src/workdir/LinkTarget/Library/libmergedlo.so 2>/dev/null || true && \
+        echo "$CONFIG_HASH" > lo-src/.slimlo-config-hash; \
+    fi && \
+    # --- Build ---
+    cd lo-src && make -j8 && \
+    cd /build && \
+    # --- Extract artifacts to non-cached path ---
+    ./scripts/extract-artifacts.sh lo-src/instdir /artifacts && \
+    # --- Build C API ---
     cmake -S slimlo-api -B slimlo-api/build \
           -DINSTDIR=/build/lo-src/instdir \
           -DCMAKE_BUILD_TYPE=Release && \
-    cmake --build slimlo-api/build -j$(nproc)
-
-# Extract minimal artifacts from instdir
-RUN echo "=== Extracting artifacts ===" && \
-    ./scripts/extract-artifacts.sh lo-src/instdir /artifacts && \
-    cp slimlo-api/build/libslimlo.so /artifacts/program/ && \
+    cmake --build slimlo-api/build -j$(nproc) && \
+    cp -a slimlo-api/build/libslimlo.so* /artifacts/program/ && \
     mkdir -p /artifacts/include && \
     cp slimlo-api/include/slimlo.h /artifacts/include/
 
 # ============================================================
-# Stage 2: Minimal runtime image (for deployment / testing)
+# Stage 3: Minimal runtime image (for deployment / testing)
 # ============================================================
 FROM ubuntu:24.04 AS runtime
 
@@ -94,7 +151,7 @@ RUN apt-get update && apt-get -y install --no-install-recommends \
         libfontconfig1 libfreetype6 libcairo2 \
         libpng16-16t64 libjpeg-turbo8 \
         libxml2 libxslt1.1 \
-        libicu74 \
+        libicu74 libnss3 libnspr4 \
         fonts-liberation fonts-dejavu-core \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -113,7 +170,7 @@ RUN echo "=== SlimLO runtime image ready ===" && \
 CMD ["sh", "-c", "echo 'SlimLO runtime' && du -sh /opt/slimlo/ && ls /opt/slimlo/program/*.so 2>/dev/null | head -20"]
 
 # ============================================================
-# Stage 3: Artifact extractor (copies to host-mounted volume)
+# Stage 4: Artifact extractor (copies to host-mounted volume)
 # Default target — `docker run -v $(pwd)/output:/output slimlo-build`
 # ============================================================
 FROM builder AS extractor

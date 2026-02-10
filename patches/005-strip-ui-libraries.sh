@@ -1,16 +1,16 @@
 #!/bin/bash
 # 005-strip-ui-libraries.sh
-# Strips pure UI dialog libraries from application modules for headless builds.
+# Strips non-essential UI targets from application modules for headless builds.
 #
-# These are separate libraries containing ONLY dialogs, sidebars, and UI components.
-# The core document processing logic remains in the main libraries (sw, sc, sd).
+# NOTE: We do NOT strip Library_swui, Library_scui, Library_sdui because they are
+# NOT in the merged libs list and the component packaging system expects them.
+# They get built as standalone .so files which are excluded at artifact extraction.
 #
-# Libraries stripped:
-#   sw/Module_sw.mk:      Library_swui  (Writer dialogs)
-#   sc/Module_sc.mk:      Library_scui  (Calc dialogs)
-#   sd/Module_sd.mk:      Library_sdui  (Impress/Draw dialogs + presenter console)
-#   desktop/Module_desktop.mk: Library_deploymentgui (extension GUI)
-#                               UIConfig_deployment   (deployment UI config)
+# We only strip targets that don't cause delivery/packaging issues:
+#   sw/Module_sw.mk:      UIConfig_* targets (UI resource configs)
+#   sc/Module_sc.mk:      UIConfig_* targets
+#   sd/Module_sd.mk:      UIConfig_* targets
+#   desktop/Module_desktop.mk: Library_deploymentgui, UIConfig_deployment
 set -euo pipefail
 
 LO_SRC="${1:?Missing LO source dir}"
@@ -24,13 +24,14 @@ wrap_target() {
     local TARGET="$2"
     local LABEL="$3"
 
-    if grep -q 'ENABLE_SLIMLO' "$FILE"; then
-        echo "    $LABEL already patched (skipping)"
+    # Check if this specific target is already wrapped
+    if grep -q "ENABLE_SLIMLO.*${TARGET}" "$FILE"; then
+        echo "    $TARGET in $LABEL already patched (skipping)"
         return 0
     fi
 
     # Match target with any leading whitespace (tabs or spaces)
-    if grep -qE "^[[:space:]]+${TARGET}( |\\))" "$FILE"; then
+    if grep -qE "^[[:space:]]+${TARGET}( |\\\\|\\))" "$FILE"; then
         # Replace preserving original indentation
         # Handle "target \" pattern (with trailing backslash)
         sed -E "s|^([[:space:]]+)${TARGET} \\\\|\1\$(if \$(ENABLE_SLIMLO),,${TARGET}) \\\\|" "$FILE" > "$FILE.tmp" && mv "$FILE.tmp" "$FILE"
@@ -43,39 +44,30 @@ wrap_target() {
     fi
 }
 
-# --- Writer: strip swui ---
-SW_MODULE="$LO_SRC/sw/Module_sw.mk"
-if [ -f "$SW_MODULE" ]; then
-    wrap_target "$SW_MODULE" "Library_swui" "sw/Module_sw.mk"
-else
-    echo "    Warning: sw/Module_sw.mk not found"
-fi
+# --- Undo previous swui/scui/sdui stripping if present in cached source ---
+# Previous versions of this patch stripped Library_swui/scui/sdui which caused
+# delivery errors. Restore them if they were wrapped.
+undo_wrap() {
+    local FILE="$1"
+    local TARGET="$2"
 
-# --- Calc: strip scui ---
-SC_MODULE="$LO_SRC/sc/Module_sc.mk"
-if [ -f "$SC_MODULE" ]; then
-    wrap_target "$SC_MODULE" "Library_scui" "sc/Module_sc.mk"
-else
-    echo "    Warning: sc/Module_sc.mk not found"
-fi
+    if [ ! -f "$FILE" ]; then return; fi
+    if grep -q "ENABLE_SLIMLO.*${TARGET}" "$FILE"; then
+        # Restore: $(if $(ENABLE_SLIMLO),,Library_swui) → Library_swui
+        sed -E "s|\\\$\\(if \\\$\\(ENABLE_SLIMLO\\),,${TARGET}\\)|${TARGET}|g" "$FILE" > "$FILE.tmp" && mv "$FILE.tmp" "$FILE"
+        echo "    Restored: $TARGET (removed old SLIMLO guard)"
+    fi
+}
 
-# --- Impress/Draw: strip sdui ---
-SD_MODULE="$LO_SRC/sd/Module_sd.mk"
-if [ -f "$SD_MODULE" ]; then
-    wrap_target "$SD_MODULE" "Library_sdui" "sd/Module_sd.mk"
-else
-    echo "    Warning: sd/Module_sd.mk not found"
-fi
+undo_wrap "$LO_SRC/sw/Module_sw.mk" "Library_swui"
+undo_wrap "$LO_SRC/sc/Module_sc.mk" "Library_scui"
+undo_wrap "$LO_SRC/sd/Module_sd.mk" "Library_sdui"
 
 # --- Desktop: strip deploymentgui + UIConfig_deployment ---
 DESKTOP_MODULE="$LO_SRC/desktop/Module_desktop.mk"
 if [ -f "$DESKTOP_MODULE" ]; then
-    if ! grep -q 'ENABLE_SLIMLO' "$DESKTOP_MODULE"; then
-        wrap_target "$DESKTOP_MODULE" "Library_deploymentgui" "desktop/Module_desktop.mk"
-        wrap_target "$DESKTOP_MODULE" "UIConfig_deployment" "desktop/Module_desktop.mk"
-    else
-        echo "    desktop/Module_desktop.mk already patched (skipping)"
-    fi
+    wrap_target "$DESKTOP_MODULE" "Library_deploymentgui" "desktop/Module_desktop.mk"
+    wrap_target "$DESKTOP_MODULE" "UIConfig_deployment" "desktop/Module_desktop.mk"
 else
     echo "    Warning: desktop/Module_desktop.mk not found"
 fi

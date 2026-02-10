@@ -63,7 +63,7 @@ echo ""
 # Step 5: Build
 # -----------------------------------------------------------
 echo ">>> Step 5: Building (this will take a while)..."
-make build-nocheck -j"$NPROC"
+make -j"$NPROC"
 echo ""
 
 # -----------------------------------------------------------

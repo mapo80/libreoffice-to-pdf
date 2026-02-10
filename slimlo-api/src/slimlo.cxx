@@ -15,6 +15,7 @@
 #include <fstream>
 #include <mutex>
 #include <string>
+#include <unistd.h>
 
 // LibreOfficeKit C++ header (thin wrapper over the C API)
 #include <LibreOfficeKit/LibreOfficeKit.hxx>
@@ -80,15 +81,11 @@ static std::string path_to_url(const char* path) {
     return url;
 }
 
-// Map SlimLOFormat to LibreOffice PDF export filter name
+// Map SlimLOFormat to LOKit format string (file extension, not filter name)
+// LOKit's saveAs() maps extensions to internal filter names via aWriterExtensionMap etc.
 static const char* get_pdf_filter(SlimLOFormat format) {
-    switch (format) {
-        case SLIMLO_FORMAT_DOCX: return "writer_pdf_Export";
-        case SLIMLO_FORMAT_XLSX: return "calc_pdf_Export";
-        case SLIMLO_FORMAT_PPTX: return "impress_pdf_Export";
-        case SLIMLO_FORMAT_UNKNOWN:
-        default: return "pdf";  // LOKit auto-detects
-    }
+    (void)format;  // All document types export to "pdf" — LOKit selects the right filter
+    return "pdf";
 }
 
 // Build PDF filter options string from SlimLOPdfOptions

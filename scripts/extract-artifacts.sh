@@ -57,8 +57,8 @@ fi
 # 3. Bootstrap RC files (required for LOKit initialization)
 # -----------------------------------------------------------
 echo "  Copying bootstrap configuration..."
-for rc in fundamentalrc fundamental.ini versionrc version.ini \
-          bootstraprc bootstrap.ini unorc uno.ini loaborc saborc; do
+for rc in sofficerc soffice.ini fundamentalrc fundamental.ini versionrc version.ini \
+          bootstraprc bootstrap.ini unorc uno.ini lounorc loaborc saborc; do
     cp -a "$INSTDIR/program/$rc" "$OUTPUT_DIR/program/" 2>/dev/null || true
 done
 
@@ -95,13 +95,29 @@ fi
 if [ -d "$INSTDIR/share/fonts" ]; then
     cp -a "$INSTDIR/share/fonts" "$OUTPUT_DIR/share/"
 fi
+# Presets directory (required for user profile initialization)
+# LOKit's userinstall::create() copies BRAND_BASE_DIR/presets to user profile.
+# LIBO_SHARE_PRESETS_FOLDER="presets" is relative to install root, NOT share/.
+# An empty directory satisfies the check; missing directory causes fatal error.
+if [ -d "$INSTDIR/presets" ]; then
+    cp -a "$INSTDIR/presets" "$OUTPUT_DIR/"
+else
+    mkdir -p "$OUTPUT_DIR/presets"
+fi
 
 # -----------------------------------------------------------
-# 7. Remove executables we don't need (keep only libraries)
+# 7. Remove executables and UI-only libraries we don't need
 # -----------------------------------------------------------
 echo "  Removing unnecessary executables..."
 for exe in soffice soffice.bin unopkg oosplash; do
     rm -f "$OUTPUT_DIR/program/$exe"
+done
+
+# Remove UI dialog libraries (not needed for headless PDF conversion)
+echo "  Removing UI-only libraries..."
+for uilib in libswuilo libscuilo libsduilo libdeploymentguilo; do
+    rm -f "$OUTPUT_DIR/program/${uilib}.so"
+    rm -f "$OUTPUT_DIR/program/${uilib}.dylib"
 done
 
 # -----------------------------------------------------------
@@ -111,6 +127,20 @@ echo "  Stripping binaries..."
 find "$OUTPUT_DIR/program" -name "*.so" -exec strip --strip-unneeded {} \; 2>/dev/null || true
 find "$OUTPUT_DIR/program" -name "*.so.*" -exec strip --strip-unneeded {} \; 2>/dev/null || true
 find "$OUTPUT_DIR/program" -name "*.dylib" -exec strip -x {} \; 2>/dev/null || true
+
+# -----------------------------------------------------------
+# 9. Verify constructor symbols survived stripping
+# -----------------------------------------------------------
+echo "  Verifying constructor symbol visibility..."
+MERGEDSO="$OUTPUT_DIR/program/libmergedlo.so"
+if [ -f "$MERGEDSO" ]; then
+    CTOR_COUNT=$(readelf --dyn-syms "$MERGEDSO" 2>/dev/null | grep -c "get_implementation" || echo "0")
+    echo "  Constructor symbols in .dynsym: $CTOR_COUNT"
+    if [ "$CTOR_COUNT" -eq 0 ] 2>/dev/null; then
+        echo "  WARNING: No constructor symbols found in libmergedlo.so .dynsym!"
+        echo "  UNO component loading will likely fail at runtime."
+    fi
+fi
 
 # -----------------------------------------------------------
 # Report
