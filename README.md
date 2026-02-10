@@ -1,19 +1,20 @@
 # SlimLO
 
-Minimal LibreOffice build for OOXML-to-PDF conversion, with C and .NET APIs.
+Minimal LibreOffice build for DOCX-to-PDF conversion, with C and .NET APIs.
 
-SlimLO is **not a fork**. It applies idempotent patch scripts to vanilla LibreOffice source, making it trivial to track upstream releases. The result is a single `libmergedlo.so` (~100 MB stripped) plus a thin `libslimlo.so` C wrapper, packaged as a ~300 MB self-contained artifact.
+SlimLO is **not a fork**. It applies idempotent patch scripts to vanilla LibreOffice source, making it trivial to track upstream releases. The result is a single `libmergedlo.so` (~97 MB stripped) plus a thin `libslimlo.so` C wrapper, packaged as a ~222 MB self-contained artifact.
 
 ## What works today
 
-- DOCX, XLSX, PPTX to PDF conversion via LibreOfficeKit
+- DOCX to PDF conversion via LibreOfficeKit
 - File-to-file and buffer-to-buffer APIs
 - PDF options: version (1.7 / PDF/A-1,2,3), JPEG quality, DPI, tagged PDF, page ranges, password-protected documents
 - Docker-based build with BuildKit cache mounts for incremental rebuilds (~50 min full, ~21s incremental)
 - Integration test: 1,754-byte `.docx` produces a valid 28,795-byte PDF 1.7
 - .NET 8 managed wrapper (`PdfConverter`) with cross-platform native library resolution
+- Super Slim mode: Calc, Impress, Math, VBA, and non-essential locale data stripped from artifacts
 
-**Current artifact size:** 301 MB (261 MB `program/` + 40 MB `share/`)
+**Current artifact size:** 222 MB (205 MB `program/` + 16 MB `share/`)
 **Platform:** linux-arm64 (Docker on Apple Silicon). The Dockerfile is named `linux-x64` but currently builds for the host architecture.
 
 ## Architecture
