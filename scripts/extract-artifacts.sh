@@ -87,6 +87,13 @@ if [ -d "$INSTDIR/share/config" ]; then
     rm -rf "$OUTPUT_DIR/share/config/soffice.cfg/cui"
     # Remove Impress config
     rm -rf "$OUTPUT_DIR/share/config/soffice.cfg/simpress"
+    # Remove swriter UI dialog files (8 MB — headless never shows dialogs)
+    rm -rf "$OUTPUT_DIR/share/config/soffice.cfg/modules/swriter/ui"
+    # Remove toolbar/menubar/popupmenu/statusbar XML (UI only)
+    rm -rf "$OUTPUT_DIR/share/config/soffice.cfg/modules/swriter/toolbar"
+    rm -rf "$OUTPUT_DIR/share/config/soffice.cfg/modules/swriter/menubar"
+    rm -rf "$OUTPUT_DIR/share/config/soffice.cfg/modules/swriter/popupmenu"
+    rm -rf "$OUTPUT_DIR/share/config/soffice.cfg/modules/swriter/statusbar"
 fi
 # Color palettes
 if [ -d "$INSTDIR/share/palette" ]; then
@@ -139,16 +146,42 @@ for lib in \
     libmigrationoo2lo libmigrationoo3lo \
     libabplo libLanguageToollo libscnlo \
     libtextconversiondlgslo libanimcorelo libicglo \
+    libmsformslo libscriptframe libdlgprovlo libunopkgapp \
+    libprotocolhandlerlo libnamingservicelo libproxyfaclo liblog_uno_uno \
+    libxmlsecurity \
 ; do
     rm -f "$OUTPUT_DIR/program/${lib}.so"
     rm -f "$OUTPUT_DIR/program/${lib}.dylib"
 done
 
 # -----------------------------------------------------------
+# 7b2. Remove external import libraries for formats we don't need
+#      (DOCX-only: no Mac Word, Keynote, StarOffice, Works, etc.)
+# -----------------------------------------------------------
+echo "  Removing non-essential external import libraries..."
+for extlib in \
+    "libmwaw-0.3-lo.so*" \
+    "libetonyek-0.1-lo.so*" \
+    "libstaroffice-0.0-lo.so*" \
+    "libwps-0.4-lo.so*" \
+    "liborcus-0.20.so*" \
+    "liborcus-parser-0.20.so*" \
+    "libodfgen-0.1-lo.so*" \
+    "libwpd-0.10-lo.so*" \
+    "libwpg-0.3-lo.so*" \
+    "librevenge-0.0-lo.so*" \
+    "libexslt.so*" \
+; do
+    rm -f "$OUTPUT_DIR/program/"$extlib
+done
+# Remove GDB helper scripts
+rm -f "$OUTPUT_DIR/program/"*.py
+
+# -----------------------------------------------------------
 # 7c. Remove XCD config for unused modules
 # -----------------------------------------------------------
 echo "  Removing unused XCD files..."
-for xcd in math base xsltfilter ogltrans ctlseqcheck cjk; do
+for xcd in math base xsltfilter ogltrans ctlseqcheck cjk impress calc draw; do
     rm -f "$OUTPUT_DIR/share/registry/${xcd}.xcd"
 done
 

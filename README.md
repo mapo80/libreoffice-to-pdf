@@ -2,7 +2,7 @@
 
 Minimal LibreOffice build for DOCX-to-PDF conversion, with C and .NET APIs.
 
-SlimLO is **not a fork**. It applies idempotent patch scripts to vanilla LibreOffice source, making it trivial to track upstream releases. The result is a single `libmergedlo.so` (~97 MB stripped) plus a thin `libslimlo.so` C wrapper, packaged as a ~222 MB self-contained artifact.
+SlimLO is **not a fork**. It applies idempotent patch scripts to vanilla LibreOffice source, making it trivial to track upstream releases. The result is a single `libmergedlo.so` (~97 MB stripped) plus a thin `libslimlo.so` C wrapper, packaged as a ~214 MB self-contained artifact.
 
 ## What works today
 
@@ -14,7 +14,7 @@ SlimLO is **not a fork**. It applies idempotent patch scripts to vanilla LibreOf
 - .NET 8 managed wrapper (`PdfConverter`) with cross-platform native library resolution
 - Super Slim mode: Calc, Impress, Math, VBA, and non-essential locale data stripped from artifacts
 
-**Current artifact size:** 222 MB (205 MB `program/` + 16 MB `share/`)
+**Current artifact size:** 214 MB (206 MB `program/` + 8 MB `share/`)
 **Platform:** linux-arm64 (Docker on Apple Silicon). The Dockerfile is named `linux-x64` but currently builds for the host architecture.
 
 ## Architecture
@@ -32,9 +32,9 @@ SlimLO is **not a fork**. It applies idempotent patch scripts to vanilla LibreOf
 └──────────────────┬──────────────────────────────┘
                    │ LibreOfficeKit
 ┌──────────────────▼──────────────────────────────┐
-│  libmergedlo.so  (~100 MB stripped)              │
-│  All of Writer, Calc, Impress merged into one   │
-│  shared library with --enable-mergelibs          │
+│  libmergedlo.so  (~97 MB stripped)               │
+│  Writer core merged into a single shared lib    │
+│  with --enable-mergelibs                         │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -97,7 +97,7 @@ byte[] pdfBytes = converter.ConvertToPdf(docxBytes, DocumentFormat.Docx);
 ### Deploy with Docker
 
 ```bash
-# Build the minimal runtime image (~300 MB + Ubuntu base)
+# Build the minimal runtime image (~222 MB + Ubuntu base)
 docker build -f docker/Dockerfile.linux-x64 --target runtime -t slimlo-runtime .
 
 # Run (seccomp=unconfined required for LibreOffice's clone3 syscall)
@@ -233,14 +233,43 @@ const char* slimlo_version(void);
 
 **Thread safety:** All conversions are serialized via internal mutex. For concurrency, use multiple processes.
 
+## Size reduction journey
+
+Full LibreOffice instdir is ~1.5 GB. SlimLO reduces it in two stages:
+
+**Stage 1 — Build-time stripping (1.5 GB → 300 MB):**
+8 patch scripts conditionally exclude 41+ modules at compile time via `ENABLE_SLIMLO` flag. Disabled features: database connectivity, Java, Python, GUI backends (GTK/Qt), desktop integration, galleries, templates, help, fonts. All code merges into a single `libmergedlo.so` via `--enable-mergelibs`.
+
+**Stage 2 — Artifact pruning (300 MB → 214 MB):**
+`extract-artifacts.sh` removes runtime files not needed for DOCX→PDF:
+
+| Removed | Size saved | Notes |
+|---------|-----------|-------|
+| Calc (`libsclo.so`, `libscfiltlo.so`) | 23 MB | Core + filters |
+| Import libraries (mwaw, etonyek, wps, ...) | 20 MB | Mac Word, Keynote, Works, ODF, WordPerfect |
+| Impress (`libsdlo.so`, `libslideshowlo.so`) | 10 MB | Core + slideshow engine |
+| soffice.cfg UI files | ~34 MB | Dialog XML, toolbars, menus for all modules |
+| Extra locale data | 7 MB | Keep only `liblocaledata_en.so` |
+| VBA macros (`libvbaobjlo.so`, `libvbaswobjlo.so`) | 5.4 MB | Not needed for conversion |
+| CUI dialogs (`libcuilo.so`) | 4 MB | UI-only, not used headless |
+| UI libraries (msforms, scriptframe, dlgprov, ...) | 2.1 MB | ActiveX forms, dialog provider, script UI |
+| Math (`libsmlo.so`) | 1.8 MB | Formula editor |
+| Misc (bibliography, scanner, add-ins, ...) | ~2 MB | 15+ minor libraries |
+| XCD config files | ~0.9 MB | Calc/Impress/Math/Base/Draw/xsltfilter config |
+
+**What must stay:**
+- Stub `.so` files (21-byte "invalid - merged lib") — UNO checks file existence before falling back to merged lib
+- `share/config/soffice.cfg/` directory structure (sfx, svx, svt, vcl) — LOKit needs dirs to exist for framework init
+- Runtime-linked externals (`libcurl`, `librdf-lo`, `libraptor2-lo`, `librasqal-lo`) — linked at build time by `libmergedlo.so`
+- `soffice.cfg/modules/swriter/` directory (can be empty) — Writer component registration
+
+**Result:** 118 .so + 19 .so.* libraries, 214 MB total (206 MB `program/` + 8 MB `share/`).
+
 ## Roadmap
 
-### Size reduction (301 MB target: ~100-150 MB)
+### Further size reduction (214 MB → ~150 MB)
 
-- [ ] Analyze which of the 187 `.so` files are actually loaded at runtime (`LD_DEBUG=libs` / `strace`)
-- [ ] Remove unused libraries from `extract-artifacts.sh`
-- [ ] Re-enable LTO (`--enable-lto`) — dead code elimination at link time, significant `libmergedlo.so` reduction
-- [ ] Prune XCD files in `share/registry/` — remove config for unused modules (Math, Base, Draw)
+- [ ] Re-enable LTO (`--enable-lto`) — dead code elimination at link time, could reduce `libmergedlo.so` by 20-30% (~97 MB → ~70 MB)
 - [ ] Reduce ICU data to only required locales
 
 ### Multi-platform
@@ -264,7 +293,6 @@ const char* slimlo_version(void);
 
 ### Future optimizations
 
-- [ ] Resource compression (`.tar.zst` with lazy decompression)
 - [ ] Custom seccomp profile (allow `clone3` only, instead of `unconfined`)
 - [ ] Font subset embedding for smaller PDFs
 - [ ] Benchmark conversion performance and memory usage
