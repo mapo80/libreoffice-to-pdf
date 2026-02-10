@@ -20,89 +20,51 @@ fi
 # Each of these appears as a line like "	modulename \" in the main module list.
 # We wrap them with: $(if $(ENABLE_SLIMLO),, modulename) \
 MODULES_TO_STRIP=(
-    # Database
+    # Database (leaf — reportdesign already guarded by DBCONNECTIVITY)
     "dbaccess"
     "reportbuilder"
-    # reportdesign is already guarded by DBCONNECTIVITY
 
-    # UI and desktop integration
-    "cui"
-    # fpicker is already guarded by DESKTOP
+    # UI integration (leaf modules only)
+    # NOTE: Do NOT strip cui, avmedia, scripting, extensions, UnoControls —
+    # they have reverse dependencies from kept modules (sfx2, svx, etc.)
+    # Let configure flags (--disable-avmedia, --disable-scripting) handle them.
     "wizards"
     "sysui"
 
-    # Help, translations, extras
-    # helpcontent2 is already guarded by HELP
-    # dictionaries is already guarded by DICTIONARIES
+    # Extras (templates, galleries — leaf)
     "extras"
 
-    # Accessibility
-    # winaccessibility is already guarded by WASM_STRIP_ACCESSIBILITY
-
-    # Media and presentation
-    "avmedia"
-    # slideshow, animations are already guarded by WASM_STRIP_BASIC_DRAW_MATH_IMPRESS
-
-    # Scripting and extensions
-    # basctl is already guarded by WASM_STRIP_CALC
-    "scripting"
-    # librelogo is already guarded by LIBRELOGO
-    "extensions"
-    # swext is already guarded by WASM_STRIP_WRITER
-    # sdext is already guarded by WASM_STRIP_BASIC_DRAW_MATH_IMPRESS
-
-    # Legacy filters
+    # Legacy filters (leaf — no reverse deps)
     "lotuswordpro"
     "hwpfilter"
     "writerperfect"
-    # starmath is already guarded by WASM_STRIP_BASIC_DRAW_MATH_IMPRESS
 
-    # Java components
+    # Java components (disabled by --with-java=no, safe to strip)
     "bean"
     "javaunohelper"
     "jurt"
     "jvmaccess"
     "jvmfwk"
 
-    # Python
-    # pyuno is already guarded by PYUNO
-
-    # Installers
-    # instsetoo_native, scp2, setup_native are already guarded by DESKTOP
-
-    # Misc
-    # icon-themes: not in the module list directly (handled differently)
-    # onlineupdate: controlled by configure flag
-    # opencl: already guarded by OPENCL
-
-    # Solvers
-    # nlpsolver is already guarded by NLPSOLVER
-    # scaddins, sccomp are already guarded by WASM_STRIP_CALC
-
-    # Development tools not needed at runtime
-    "codemaker"
-    "cpputools"
-    "idl"
+    # NOTE: Do NOT strip build tools (codemaker, cpputools, idl, soltools) —
+    # they produce executables (cppumaker, svidl, etc.) needed during build.
+    # They don't affect runtime size (not installed to instdir/).
     "unodevtools"
-    "soltools"
     "readlicense_oo"
 
-    # Test infrastructure
+    # Test infrastructure (leaf)
     "test"
     "testtools"
     "smoketest"
     "unotest"
-    # qadevOOo is already guarded by QADEVOOO
-    # uitest is already guarded by PYUNO
 
-    # UNO tools not needed
+    # UNO tools / bindings (leaf)
     "remotebridges"
-    "UnoControls"
     "unoil"
     "ridljar"
     "net_ure"
 
-    # Misc modules not needed for headless PDF
+    # Platform-specific (leaf)
     "embedserv"
     "apple_remote"
     "android"
