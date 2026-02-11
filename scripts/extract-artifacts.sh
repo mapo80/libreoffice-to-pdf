@@ -160,17 +160,17 @@ done
 # -----------------------------------------------------------
 echo "  Removing non-essential external import libraries..."
 for extlib in \
-    "libmwaw-0.3-lo.so*" \
-    "libetonyek-0.1-lo.so*" \
-    "libstaroffice-0.0-lo.so*" \
-    "libwps-0.4-lo.so*" \
-    "liborcus-0.20.so*" \
-    "liborcus-parser-0.20.so*" \
-    "libodfgen-0.1-lo.so*" \
-    "libwpd-0.10-lo.so*" \
-    "libwpg-0.3-lo.so*" \
-    "librevenge-0.0-lo.so*" \
-    "libexslt.so*" \
+    "libmwaw-0.3-lo.so*" "libmwaw-0.3-lo.dylib" \
+    "libetonyek-0.1-lo.so*" "libetonyek-0.1-lo.dylib" \
+    "libstaroffice-0.0-lo.so*" "libstaroffice-0.0-lo.dylib" \
+    "libwps-0.4-lo.so*" "libwps-0.4-lo.dylib" \
+    "liborcus-0.20.so*" "liborcus-0.20.dylib" \
+    "liborcus-parser-0.20.so*" "liborcus-parser-0.20.dylib" \
+    "libodfgen-0.1-lo.so*" "libodfgen-0.1-lo.dylib" \
+    "libwpd-0.10-lo.so*" "libwpd-0.10-lo.dylib" \
+    "libwpg-0.3-lo.so*" "libwpg-0.3-lo.dylib" \
+    "librevenge-0.0-lo.so*" "librevenge-0.0-lo.dylib" \
+    "libexslt.so*" "libexslt.dylib" \
 ; do
     rm -f "$OUTPUT_DIR/program/"$extlib
 done
@@ -206,18 +206,31 @@ rm -f "$OUTPUT_DIR/share/registry/lingucomponent.xcd"
 #     libcurl.so.4 is NEEDED by libmergedlo.so but never called for local conversion.
 #     NOTE: librdf/libraptor2/librasqal CANNOT be removed — called at runtime.
 # -----------------------------------------------------------
-echo "  Removing unused NEEDED libraries via patchelf..."
-MERGEDSO_PRE="$OUTPUT_DIR/program/libmergedlo.so"
-if command -v patchelf &>/dev/null && [ -f "$MERGEDSO_PRE" ]; then
-    for needlib in libcurl.so.4; do
-        if readelf -d "$MERGEDSO_PRE" 2>/dev/null | grep -q "$needlib"; then
-            patchelf --remove-needed "$needlib" "$MERGEDSO_PRE"
-            rm -f "$OUTPUT_DIR/program/$needlib"
-            echo "    Removed NEEDED + file: $needlib"
-        fi
-    done
+echo "  Removing unused NEEDED libraries..."
+if [ "$(uname -s)" = "Darwin" ]; then
+    MERGEDSO_PRE="$OUTPUT_DIR/program/libmergedlo.dylib"
+    if [ -f "$MERGEDSO_PRE" ]; then
+        for needlib in libcurl.4.dylib; do
+            if otool -L "$MERGEDSO_PRE" 2>/dev/null | grep -q "$needlib"; then
+                install_name_tool -change "@rpath/$needlib" "" "$MERGEDSO_PRE" 2>/dev/null || true
+                rm -f "$OUTPUT_DIR/program/$needlib"
+                echo "    Removed dependency + file: $needlib"
+            fi
+        done
+    fi
 else
-    echo "    patchelf not available — skipping NEEDED removal"
+    MERGEDSO_PRE="$OUTPUT_DIR/program/libmergedlo.so"
+    if command -v patchelf &>/dev/null && [ -f "$MERGEDSO_PRE" ]; then
+        for needlib in libcurl.so.4; do
+            if readelf -d "$MERGEDSO_PRE" 2>/dev/null | grep -q "$needlib"; then
+                patchelf --remove-needed "$needlib" "$MERGEDSO_PRE"
+                rm -f "$OUTPUT_DIR/program/$needlib"
+                echo "    Removed NEEDED + file: $needlib"
+            fi
+        done
+    else
+        echo "    patchelf not available — skipping NEEDED removal"
+    fi
 fi
 
 # -----------------------------------------------------------
@@ -232,13 +245,25 @@ find "$OUTPUT_DIR/program" -name "*.dylib" -exec strip -x {} \; 2>/dev/null || t
 # 9. Verify constructor symbols survived stripping
 # -----------------------------------------------------------
 echo "  Verifying constructor symbol visibility..."
-MERGEDSO="$OUTPUT_DIR/program/libmergedlo.so"
-if [ -f "$MERGEDSO" ]; then
-    CTOR_COUNT=$(readelf --dyn-syms -W "$MERGEDSO" 2>/dev/null | grep -c "get_implementation" || echo "0")
-    echo "  Constructor symbols in .dynsym: $CTOR_COUNT"
-    if [ "$CTOR_COUNT" -eq 0 ] 2>/dev/null; then
-        echo "  WARNING: No constructor symbols found in libmergedlo.so .dynsym!"
-        echo "  UNO component loading will likely fail at runtime."
+if [ "$(uname -s)" = "Darwin" ]; then
+    MERGEDSO="$OUTPUT_DIR/program/libmergedlo.dylib"
+    if [ -f "$MERGEDSO" ]; then
+        CTOR_COUNT=$(nm -g "$MERGEDSO" 2>/dev/null | grep -c "get_implementation" || echo "0")
+        echo "  Constructor symbols: $CTOR_COUNT"
+        if [ "$CTOR_COUNT" -eq 0 ] 2>/dev/null; then
+            echo "  WARNING: No constructor symbols found in libmergedlo.dylib!"
+            echo "  UNO component loading will likely fail at runtime."
+        fi
+    fi
+else
+    MERGEDSO="$OUTPUT_DIR/program/libmergedlo.so"
+    if [ -f "$MERGEDSO" ]; then
+        CTOR_COUNT=$(readelf --dyn-syms -W "$MERGEDSO" 2>/dev/null | grep -c "get_implementation" || echo "0")
+        echo "  Constructor symbols in .dynsym: $CTOR_COUNT"
+        if [ "$CTOR_COUNT" -eq 0 ] 2>/dev/null; then
+            echo "  WARNING: No constructor symbols found in libmergedlo.so .dynsym!"
+            echo "  UNO component loading will likely fail at runtime."
+        fi
     fi
 fi
 
