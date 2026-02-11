@@ -15,7 +15,15 @@
 #include <fstream>
 #include <mutex>
 #include <string>
-#include <unistd.h>
+
+#ifdef _WIN32
+  #include <io.h>
+  #include <direct.h>
+  #include <windows.h>
+  #define unlink _unlink
+#else
+  #include <unistd.h>
+#endif
 
 // LibreOfficeKit C++ header (thin wrapper over the C API)
 #include <LibreOfficeKit/LibreOfficeKit.hxx>
@@ -65,9 +73,19 @@ static void set_error(SlimLOHandle handle, const std::string& msg) {
 
 // Convert a file path to a file:// URL
 static std::string path_to_url(const char* path) {
+#ifdef _WIN32
+    char abs[_MAX_PATH];
+    if (_fullpath(abs, path, _MAX_PATH)) {
+        std::string p(abs);
+        for (auto& c : p) if (c == '\\') c = '/';
+        return "file:///" + p;
+    }
+    std::string p(path);
+    for (auto& c : p) if (c == '\\') c = '/';
+    return "file:///" + p;
+#else
     std::string url = "file://";
     if (path[0] != '/') {
-        // Relative path — resolve to absolute
         char* abs = realpath(path, nullptr);
         if (abs) {
             url += abs;
@@ -79,6 +97,7 @@ static std::string path_to_url(const char* path) {
         url += path;
     }
     return url;
+#endif
 }
 
 // Map SlimLOFormat to LOKit format string (file extension, not filter name)
@@ -86,6 +105,24 @@ static std::string path_to_url(const char* path) {
 static const char* get_pdf_filter(SlimLOFormat format) {
     (void)format;  // All document types export to "pdf" — LOKit selects the right filter
     return "pdf";
+}
+
+// Create a temporary file and return its path (empty string on failure)
+static std::string make_temp_file() {
+#ifdef _WIN32
+    char tmp_dir[MAX_PATH];
+    GetTempPathA(MAX_PATH, tmp_dir);
+    char tmp_file[MAX_PATH];
+    if (GetTempFileNameA(tmp_dir, "slo", 0, tmp_file) == 0)
+        return "";
+    return std::string(tmp_file);
+#else
+    char tmpl[] = "/tmp/slimlo_XXXXXX";
+    int fd = mkstemp(tmpl);
+    if (fd < 0) return "";
+    close(fd);
+    return std::string(tmpl);
+#endif
 }
 
 // Build PDF filter options string from SlimLOPdfOptions
@@ -279,17 +316,15 @@ SLIMLO_API SlimLOError slimlo_convert_buffer(
         default: break;
     }
 
-    char tmp_input[] = "/tmp/slimlo_in_XXXXXX";
-    int fd = mkstemp(tmp_input);
-    if (fd < 0) {
+    std::string tmp_base = make_temp_file();
+    if (tmp_base.empty()) {
         set_error(handle, "Failed to create temporary input file");
         return SLIMLO_ERROR_PERMISSION_DENIED;
     }
 
     // Append correct extension
-    std::string tmp_input_path = std::string(tmp_input) + ext;
-    close(fd);
-    rename(tmp_input, tmp_input_path.c_str());
+    std::string tmp_input_path = tmp_base + ext;
+    rename(tmp_base.c_str(), tmp_input_path.c_str());
 
     // Write input data
     {
@@ -303,16 +338,14 @@ SLIMLO_API SlimLOError slimlo_convert_buffer(
     }
 
     // Create temporary output file
-    char tmp_output[] = "/tmp/slimlo_out_XXXXXX";
-    fd = mkstemp(tmp_output);
-    if (fd < 0) {
+    std::string tmp_out_base = make_temp_file();
+    if (tmp_out_base.empty()) {
         unlink(tmp_input_path.c_str());
         set_error(handle, "Failed to create temporary output file");
         return SLIMLO_ERROR_PERMISSION_DENIED;
     }
-    std::string tmp_output_path = std::string(tmp_output) + ".pdf";
-    close(fd);
-    rename(tmp_output, tmp_output_path.c_str());
+    std::string tmp_output_path = tmp_out_base + ".pdf";
+    rename(tmp_out_base.c_str(), tmp_output_path.c_str());
 
     // Convert
     SlimLOError err = slimlo_convert_file(handle, tmp_input_path.c_str(),

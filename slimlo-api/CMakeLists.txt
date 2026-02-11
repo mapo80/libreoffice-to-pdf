@@ -54,16 +54,20 @@ else()
                     "SlimLO will rely on runtime dlopen via LOKit.")
 endif()
 
-# LOKit uses dlopen internally
-target_link_libraries(slimlo PRIVATE ${CMAKE_DL_LIBS})
+# LOKit uses dlopen internally (not needed on Windows — uses LoadLibrary)
+if(NOT WIN32)
+    target_link_libraries(slimlo PRIVATE ${CMAKE_DL_LIBS})
+endif()
 
-# RPATH for finding LO libraries at runtime
-set_target_properties(slimlo PROPERTIES
-    BUILD_RPATH "${INSTDIR}/program"
-    INSTALL_RPATH "$ORIGIN"
-    VERSION ${PROJECT_VERSION}
-    SOVERSION 0
-)
+# RPATH and SOVERSION (Unix only — Windows uses PATH / side-by-side)
+if(NOT WIN32)
+    set_target_properties(slimlo PROPERTIES
+        BUILD_RPATH "${INSTDIR}/program"
+        INSTALL_RPATH "$ORIGIN"
+        VERSION ${PROJECT_VERSION}
+        SOVERSION 0
+    )
+endif()
 
 # Install
 install(TARGETS slimlo
