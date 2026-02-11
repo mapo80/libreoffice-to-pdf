@@ -60,6 +60,19 @@ cd "$LO_SRC_DIR"
 echo ""
 
 # -----------------------------------------------------------
+# Step 4.5: Apply post-autogen patches
+# -----------------------------------------------------------
+echo ">>> Step 4.5: Applying post-autogen patches..."
+for patch in "$PROJECT_DIR"/patches/*.postautogen; do
+    [ -f "$patch" ] || continue
+    echo "    Running $(basename "$patch")"
+    bash "$patch" "$LO_SRC_DIR"
+done
+# Force re-link of merged lib (ldflags change not detected by make)
+rm -f "$LO_SRC_DIR/workdir/LinkTarget/Library/libmergedlo.so" 2>/dev/null || true
+echo ""
+
+# -----------------------------------------------------------
 # Step 5: Build
 # -----------------------------------------------------------
 echo ">>> Step 5: Building (this will take a while)..."
@@ -81,14 +94,15 @@ echo ">>> Step 7: Building SlimLO C API..."
 if [ -f "$PROJECT_DIR/slimlo-api/CMakeLists.txt" ]; then
     cmake -S "$PROJECT_DIR/slimlo-api" \
           -B "$PROJECT_DIR/slimlo-api/build" \
-          -DCMAKE_PREFIX_PATH="$OUTPUT_DIR" \
+          -DINSTDIR="$LO_SRC_DIR/instdir" \
           -DCMAKE_BUILD_TYPE=Release
     cmake --build "$PROJECT_DIR/slimlo-api/build" -j"$NPROC"
 
-    # Copy library to output
-    find "$PROJECT_DIR/slimlo-api/build" \
-        \( -name "libslimlo.so" -o -name "libslimlo.dylib" -o -name "slimlo.dll" \) \
-        -exec cp {} "$OUTPUT_DIR/program/" \;
+    # Copy library + symlinks to output
+    cp -a "$PROJECT_DIR/slimlo-api/build"/libslimlo.so* "$OUTPUT_DIR/program/" 2>/dev/null || true
+    cp -a "$PROJECT_DIR/slimlo-api/build"/libslimlo.dylib* "$OUTPUT_DIR/program/" 2>/dev/null || true
+    mkdir -p "$OUTPUT_DIR/include"
+    cp "$PROJECT_DIR/slimlo-api/include/slimlo.h" "$OUTPUT_DIR/include/"
     echo "    SlimLO C API built and copied to $OUTPUT_DIR/program/"
 else
     echo "    WARNING: slimlo-api/CMakeLists.txt not found, skipping C API build"
