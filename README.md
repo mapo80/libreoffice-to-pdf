@@ -1,82 +1,142 @@
 # SlimLO
 
-Minimal LibreOffice build for DOCX-to-PDF conversion, with C and .NET APIs.
+Minimal LibreOffice build for OOXML-to-PDF conversion, with C and .NET APIs.
 
-SlimLO is **not a fork**. It applies idempotent patch scripts to vanilla LibreOffice source, making it trivial to track upstream releases. The result is a single `libmergedlo.so` (~97 MB stripped) plus a thin `libslimlo.so` C wrapper, packaged as a ~214 MB self-contained artifact.
-
-## What works today
-
-- DOCX to PDF conversion via LibreOfficeKit
-- File-to-file and buffer-to-buffer APIs
-- PDF options: version (1.7 / PDF/A-1,2,3), JPEG quality, DPI, tagged PDF, page ranges, password-protected documents
-- Docker-based build with BuildKit cache mounts for incremental rebuilds (~50 min full, ~21s incremental)
-- Integration test: 1,754-byte `.docx` produces a valid 28,795-byte PDF 1.7
-- .NET 8 managed wrapper (`PdfConverter`) with cross-platform native library resolution
-- Super Slim mode: Calc, Impress, Math, VBA, and non-essential locale data stripped from artifacts
-
-**Current artifact size:** 214 MB (206 MB `program/` + 8 MB `share/`)
-**Platform:** linux-arm64 (Docker on Apple Silicon). The Dockerfile is named `linux-x64` but currently builds for the host architecture.
+SlimLO is **not a fork**. It applies idempotent patch scripts to vanilla LibreOffice source, making it trivial to track upstream releases. The result is a single `libmergedlo.so` (~98 MB stripped, LTO-optimized) plus a thin `libslimlo.so` C wrapper, packaged as a **186 MB** self-contained artifact.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────┐
-│  .NET Application                               │
-│  using var c = PdfConverter.Create();            │
-│  c.ConvertToPdf("in.docx", "out.pdf");          │
-└──────────────────┬──────────────────────────────┘
-                   │ P/Invoke
-┌──────────────────▼──────────────────────────────┐
-│  libslimlo.so  (C API — slimlo.h)               │
-│  slimlo_init / slimlo_convert_file / _buffer    │
-└──────────────────┬──────────────────────────────┘
-                   │ LibreOfficeKit
-┌──────────────────▼──────────────────────────────┐
-│  libmergedlo.so  (~97 MB stripped)               │
-│  Writer core merged into a single shared lib    │
-│  with --enable-mergelibs                         │
-└─────────────────────────────────────────────────┘
+                    Your application
+                         |
+         ----------------+----------------
+         |                                |
+    .NET (P/Invoke)                  C (direct)
+         |                                |
+    PdfConverter.cs               #include "slimlo.h"
+         |                                |
+         +---------- libslimlo.so --------+
+                         |
+                   LibreOfficeKit
+                         |
+                   libmergedlo.so
+                  (~98 MB, LTO, stripped)
+                  Writer + UNO + filters
+                  merged into one .so
 ```
 
-## Quick start
+## Getting the shared libraries
+
+### Prerequisites
+
+- Docker with BuildKit support
+- 16 GB+ RAM allocated to Docker Desktop (large LO source files need ~3 GB per compiler process)
 
 ### Build
 
 ```bash
-# Full build (Docker — ~50 min first time, ~21s incremental)
-DOCKER_BUILDKIT=1 docker build -f docker/Dockerfile.linux-x64 -t slimlo-build .
+# Build everything (~50 min first time, ~30s incremental)
+DOCKER_BUILDKIT=1 docker build \
+  -f docker/Dockerfile.linux-x64 \
+  --build-arg SCRIPTS_HASH=$(cat scripts/*.sh patches/*.sh patches/*.postautogen | sha256sum | cut -d' ' -f1) \
+  -t slimlo-build .
 
 # Extract artifacts to ./output/
 docker run --rm -v $(pwd)/output:/output slimlo-build
 ```
 
-### Test
+The `output/` directory will contain:
+
+```
+output/
+├── program/           # 178 MB — all shared libraries
+│   ├── libmergedlo.so       # 98 MB  — core LO engine (LTO-optimized)
+│   ├── libslimlo.so         # C API wrapper (+ .so.0, .so.0.1.0 symlinks)
+│   ├── libswlo.so           # Writer module
+│   ├── lib*.so              # 134 other .so files (UNO, ICU, externals, stubs)
+│   ├── sofficerc            # Bootstrap RC chain (→ fundamentalrc → lounorc → unorc)
+│   └── types/offapi.rdb     # UNO type registry
+├── share/             # 7.6 MB — runtime config
+│   ├── registry/*.xcd       # XCD config (main, writer, graphicfilter, ctl, en-US)
+│   ├── config/soffice.cfg/  # UI config needed by LOKit framework init
+│   └── filter/              # Filter definitions
+├── presets/            # Empty dir (required by LOKit)
+└── include/
+    └── slimlo.h             # C API header
+```
+
+### Test the conversion
+
+```bash
+# Build the runtime image
+docker build -f docker/Dockerfile.linux-x64 --target runtime -t slimlo-runtime .
+
+# Convert a DOCX file (seccomp=unconfined required for LO's clone3 syscall)
+docker run --rm --security-opt seccomp=unconfined \
+  -v $(pwd)/tests:/data \
+  slimlo-runtime \
+  sh -c 'cd /tmp && your-app /data/test.docx /data/output.pdf'
+```
+
+Or use the included integration test:
 
 ```bash
 ./tests/test.sh
 ```
 
-This builds the runtime image, compiles the C test program inside Docker, converts `tests/test.docx` to PDF, and validates the output.
+### Local build (without Docker)
 
-### Use from C
+```bash
+# Requires: apt build-dep libreoffice (Ubuntu 24.04)
+./scripts/build.sh
+```
+
+## Using the C API
 
 ```c
 #include "slimlo.h"
 
-SlimLOHandle h = slimlo_init("/opt/slimlo");
-SlimLOError err = slimlo_convert_file(h, "input.docx", "output.pdf",
-                                       SLIMLO_FORMAT_UNKNOWN, NULL);
-if (err != SLIMLO_OK)
-    fprintf(stderr, "Error: %s\n", slimlo_get_error_message(h));
-slimlo_destroy(h);
+int main() {
+    SlimLOHandle h = slimlo_init("/path/to/slimlo");
+    if (!h) return 1;
+
+    SlimLOError err = slimlo_convert_file(
+        h, "input.docx", "output.pdf",
+        SLIMLO_FORMAT_UNKNOWN,  // auto-detect from extension
+        NULL                    // default PDF options
+    );
+
+    if (err != SLIMLO_OK)
+        fprintf(stderr, "Error: %s\n", slimlo_get_error_message(h));
+
+    slimlo_destroy(h);
+    return err;
+}
 ```
 
-### Use from .NET
+**API surface:**
+
+| Function | Description |
+|----------|-------------|
+| `slimlo_init(resource_path)` | Initialize (once per process). Returns opaque handle. |
+| `slimlo_destroy(handle)` | Free all resources. |
+| `slimlo_convert_file(h, in, out, fmt, opts)` | Convert file to PDF. |
+| `slimlo_convert_buffer(h, data, size, fmt, opts, &out, &outsize)` | Convert in-memory buffer to PDF. |
+| `slimlo_free_buffer(buf)` | Free buffer from `convert_buffer`. |
+| `slimlo_get_error_message(h)` | Last error (pass NULL for init errors). |
+
+**PDF options (`SlimLOPdfOptions`):** version (1.7 / PDF/A-1,2,3), JPEG quality, DPI, tagged PDF, page range, password.
+
+**Thread safety:** Conversions are serialized via internal mutex. For concurrency, use multiple processes.
+
+## Using the .NET wrapper
 
 ```csharp
 using SlimLO;
 
 using var converter = PdfConverter.Create("/opt/slimlo");
+
+// File to file
 converter.ConvertToPdf("input.docx", "output.pdf");
 
 // With options
@@ -84,219 +144,185 @@ converter.ConvertToPdf("input.docx", "output.pdf", new PdfOptions
 {
     Version = PdfVersion.PdfA2,
     JpegQuality = 85,
-    Dpi = 150,
-    TaggedPdf = true,
-    PageRange = "1-3"
+    Dpi = 150
 });
 
-// Buffer-to-buffer
-byte[] docxBytes = File.ReadAllBytes("input.docx");
-byte[] pdfBytes = converter.ConvertToPdf(docxBytes, DocumentFormat.Docx);
+// Buffer to buffer
+byte[] pdfBytes = converter.ConvertToPdf(
+    File.ReadAllBytes("input.docx"), DocumentFormat.Docx);
 ```
 
-### Deploy with Docker
+## Build pipeline
 
-```bash
-# Build the minimal runtime image (~222 MB + Ubuntu base)
-docker build -f docker/Dockerfile.linux-x64 --target runtime -t slimlo-runtime .
+The Docker build is fully reproducible and uses aggressive caching:
 
-# Run (seccomp=unconfined required for LibreOffice's clone3 syscall)
-docker run --rm \
-    --security-opt seccomp=unconfined \
-    -v /path/to/files:/data \
-    slimlo-runtime \
-    /opt/slimlo/your-app /data/input.docx /data/output.pdf
 ```
+┌─ Stage 1: deps ─────────────────────────────────────┐
+│  Ubuntu 24.04 + apt build-dep libreoffice            │
+│  (stable layer, rarely changes)                      │
+└──────────────────────────────────────────────────────┘
+                        |
+┌─ Stage 2: builder ───────────────────────────────────┐
+│  Single RUN with two cache mounts:                   │
+│                                                      │
+│  /build/lo-src (cache) ── clone + patch + build      │
+│  /ccache       (cache) ── compiler cache             │
+│                                                      │
+│  1. Clone LO source (skip if cached)                 │
+│  2. Hash config+patches → skip autogen if unchanged  │
+│  3. Apply patches (idempotent .sh scripts)           │
+│  4. autogen.sh --with-distro=SlimLO                  │
+│  5. Post-autogen patches (LTO flags)                 │
+│  6. make -j10 (incremental via cache)                │
+│  7. extract-artifacts.sh → /artifacts                │
+│  8. Build libslimlo.so (CMake)                       │
+└──────────────────────────────────────────────────────┘
+                        |
+┌─ Stage 3: runtime ───────────────────────────────────┐
+│  Minimal Ubuntu + runtime deps only                  │
+│  COPY --from=builder /artifacts → /opt/slimlo        │
+└──────────────────────────────────────────────────────┘
+```
+
+**Incremental rebuilds:** When only patches or config change, the cached `lo-src` has all compiled objects. `make` detects what changed and only recompiles affected files (~30s for a patch change vs ~50 min full build).
+
+**Config hash caching:** `SHA-256(SlimLO.conf + patches/*.sh + patches/*.postautogen)` is compared against the cached hash. If unchanged, `autogen.sh` is skipped entirely, preventing timestamp cascades that trigger unnecessary full recompilation.
+
+## How patching works
+
+SlimLO uses **shell scripts** instead of `git .patch` files. Each script is idempotent (safe to re-run) and resilient to upstream line-number changes.
+
+The `ENABLE_SLIMLO` flag flows through the LO build system:
+
+```
+configure.ac  →  --enable-slimlo
+config_host.mk.in  →  ENABLE_SLIMLO=TRUE
+makefiles  →  $(if $(ENABLE_SLIMLO),,target)  to exclude targets
+```
+
+| Patch | What it does |
+|-------|-------------|
+| 001 | Adds `--enable-slimlo` flag to `configure.ac` and `config_host.mk.in` |
+| 002 | Conditionally excludes 41 non-essential modules (dbaccess, wizards, extras, ...) |
+| 003 | Copies `SlimLO.conf` distro config into the LO source tree |
+| 004 | Strips 11 non-Writer export filter targets (SVG, DocBook, XHTML, T602, ...) |
+| 005 | Removes desktop deployment GUI and UIConfig targets |
+| 006 | Fixes unconditional entries in `pre_MergedLibsList.mk` that conflict with disabled features |
+| 007 | Moves DB-dependent code in `Library_swui.mk` behind `DBCONNECTIVITY` guard |
+| 008 | Adds `--export-dynamic` to `libmergedlo.so` to preserve UNO constructor symbols |
+| 009 | *(post-autogen)* Restricts LTO to merged lib only, preventing link failures in non-merged libs |
+
+## Size reduction journey
+
+Full LibreOffice `instdir/` is **~1.5 GB**. SlimLO reduces it in three stages:
+
+### Stage 1: Build-time stripping (1.5 GB → 300 MB)
+
+9 patch scripts conditionally exclude 41+ modules at compile time. Disabled: database connectivity, Java, Python, GUI backends (GTK/Qt), desktop integration, galleries, templates, help, fonts. All code merges into `libmergedlo.so` via `--enable-mergelibs`.
+
+### Stage 2: Artifact pruning (300 MB → 214 MB)
+
+`extract-artifacts.sh` removes runtime files not needed for DOCX→PDF:
+
+- Non-Writer modules: Calc (23 MB), Impress (10 MB), Math (1.8 MB)
+- External import libraries: mwaw, etonyek, wps, orcus, odfgen, wpd, wpg (20 MB)
+- VBA macros, CUI dialogs, form controls, UI-only libraries (11 MB)
+- XCD config for Calc/Impress/Math/Base/Draw/xsltfilter
+- Extra locale data (keep only `liblocaledata_en.so`)
+
+### Stage 3: LTO + deep pruning (214 MB → 186 MB)
+
+- **LTO** (`--enable-lto`): Link-time optimization on `libmergedlo.so` with dead code elimination. Applied only to merged lib (patch 009 prevents LTO on non-merged libs that would fail).
+- **patchelf**: `patchelf --remove-needed libcurl.so.4` removes unused dynamic dependency (~4.6 MB saved)
+- **Config pruning**: Removed `oovbaapi.rdb`, `lingucomponent.xcd`, signature SVGs
+
+### What cannot be removed (tested and confirmed)
+
+| Item | Why it must stay |
+|------|-----------------|
+| `.ui` files in `soffice.cfg/` | LOKit loads dialog files even in headless mode |
+| RDF stack (`librdf`, `libraptor2`, `librasqal`) | `librdf_new_world` called at runtime for DOCX→PDF |
+| Stub `.so` files (21 bytes each) | UNO checks file existence before falling back to merged lib |
+| Bootstrap RC chain (`sofficerc` → `fundamentalrc` → `lounorc` → `unorc`) | Missing any link breaks UNO service loading |
+| `presets/` directory | Must exist (can be empty), or LOKit throws "User installation could not be completed" |
+
+## Current status
+
+| Metric | Value |
+|--------|-------|
+| Artifact size | **186 MB** (178 MB `program/` + 7.6 MB `share/`) |
+| `libmergedlo.so` | 98 MB (stripped, LTO) |
+| Libraries | 137 (82 stubs + 55 real) |
+| Constructor symbols | 557 exported |
+| Test result | `test.docx` (1,754 B) → valid PDF (26 KB) |
+| LO version | `libreoffice-25.8.5.1` |
+| Platform | linux-arm64 (Docker on Apple Silicon) |
+
+## Roadmap
+
+### Further size reduction (186 MB → ~155 MB)
+
+- [ ] ICU data filter: custom ICU build with only required locales. ICU libs are 36 MB; filtering could save ~25-28 MB.
+
+### Multi-platform
+
+- [ ] True linux-x64 build (Dockerfile currently builds for host arch)
+- [ ] linux-arm64 dedicated Dockerfile
+- [ ] macOS native build (without Docker)
+- [ ] Windows build
+
+### CI/CD
+
+- [ ] GitHub Actions: automated Docker build + integration test
+- [ ] Multi-arch Docker image publishing
+- [ ] NuGet package generation and publishing
+
+### Quality
+
+- [ ] Custom seccomp profile (allow only `clone3`, instead of `seccomp=unconfined`)
+- [ ] End-to-end .NET tests inside Docker
+- [ ] Benchmark: conversion performance and memory usage
 
 ## Project structure
 
 ```
 .
-├── LO_VERSION                     # Pinned LibreOffice version (libreoffice-25.8.5.1)
+├── LO_VERSION                          # Pinned LO tag (libreoffice-25.8.5.1)
 ├── distro-configs/
-│   └── SlimLO.conf                # Configure flags for minimal LO build
+│   └── SlimLO.conf                     # 54 configure flags for minimal build
 ├── docker/
-│   └── Dockerfile.linux-x64       # Multi-stage: deps → builder → runtime → extractor
-├── patches/                       # Idempotent .sh scripts (not .patch files)
-│   ├── 001-add-slimlo-configure-flag.sh
-│   ├── 002-strip-modules.sh
-│   ├── 003-slimlo-distro-config.sh
-│   ├── 004-strip-filters.sh
-│   ├── 005-strip-ui-libraries.sh
-│   ├── 006-fix-mergelibs-conditionals.sh
-│   ├── 007-fix-swui-db-conditionals.sh
-│   └── 008-mergedlibs-export-constructors.sh
+│   └── Dockerfile.linux-x64            # Multi-stage: deps → builder → runtime → extractor
+├── patches/                            # 9 idempotent .sh scripts (not .patch files)
+│   ├── 001..008-*.sh                   # Pre-autogen patches
+│   └── 009-*.postautogen               # Post-autogen patch (LTO flags)
 ├── scripts/
-│   ├── apply-patches.sh           # Runs all patches in order
-│   ├── build.sh                   # Full build pipeline (non-Docker)
-│   ├── extract-artifacts.sh       # Extracts minimal runtime from instdir
-│   ├── docker-build.sh            # Docker build orchestrator
-│   ├── pack-nuget.sh              # NuGet packaging
-│   └── bump-lo-version.sh         # Version update helper
-├── slimlo-api/                    # C API wrapper (libslimlo.so)
+│   ├── build.sh                        # Full local build pipeline
+│   ├── apply-patches.sh                # Runs all patches in order
+│   ├── extract-artifacts.sh            # Prunes instdir → minimal artifact set
+│   ├── docker-build.sh                 # Docker build orchestrator
+│   ├── pack-nuget.sh                   # NuGet packaging
+│   ├── bump-lo-version.sh              # Update pinned LO version
+│   └── test-patches.sh                 # Patch validation
+├── slimlo-api/                         # C API wrapper
 │   ├── CMakeLists.txt
-│   ├── include/slimlo.h           # Public C header
-│   └── src/slimlo.cxx             # Implementation over LibreOfficeKit
+│   ├── include/slimlo.h                # Public header
+│   └── src/slimlo.cxx                  # LOKit-based implementation
 ├── dotnet/
-│   ├── SlimLO/                    # .NET 8 managed wrapper
-│   │   ├── PdfConverter.cs        # High-level API
-│   │   └── NativeMethods.cs       # P/Invoke bindings
-│   ├── SlimLO.Native/             # Per-platform NuGet packages
-│   └── SlimLO.Tests/              # xUnit tests
+│   ├── SlimLO/                         # .NET 8 managed wrapper (PdfConverter)
+│   ├── SlimLO.Native/                  # Per-platform native NuGet package
+│   └── SlimLO.Tests/                   # xUnit tests
 └── tests/
-    ├── test.sh                    # Docker-based integration test
-    ├── test_convert.c             # C test program
-    └── generate_test_docx.py      # Test fixture generator
-```
-
-## How patching works
-
-SlimLO uses **shell scripts** instead of `git .patch` files. Each script is idempotent (safe to re-run) and more resilient to upstream changes than line-number-dependent patches.
-
-The `ENABLE_SLIMLO` flag flows through the build system:
-
-```
-configure.ac (--enable-slimlo)
-  → config_host.mk.in (ENABLE_SLIMLO=TRUE)
-    → makefiles use $(if $(ENABLE_SLIMLO),,target) to exclude modules
-```
-
-**What the patches strip:**
-
-| Patch | What it does |
-|-------|-------------|
-| 001 | Adds `--enable-slimlo` flag to `configure.ac` |
-| 002 | Conditionally excludes 41 non-essential modules (dbaccess, wizards, extras, ...) |
-| 003 | Copies `SlimLO.conf` distro config into LO source tree |
-| 004 | Strips 11 export filter targets (SVG, DocBook, XHTML, T602, ...) |
-| 005 | Removes desktop deployment GUI and UIConfig targets |
-| 006 | Fixes unconditional entries in `pre_MergedLibsList.mk` that conflict with disabled features |
-| 007 | Moves DB-dependent code in `Library_swui.mk` behind `DBCONNECTIVITY` guard |
-| 008 | Creates linker version script to export UNO constructor symbols from `libmergedlo.so` |
-
-## Build configuration
-
-Key configure flags in [SlimLO.conf](distro-configs/SlimLO.conf):
-
-| Flag | Purpose |
-|------|---------|
-| `--enable-slimlo` | Activates all SlimLO makefile conditionals |
-| `--disable-gui` | No desktop UI (implies `--enable-headless` with SVP backend) |
-| `--enable-mergelibs` | Merges ~150 libraries into single `libmergedlo.so` |
-| `--with-java=no` | No JVM dependency |
-| `--disable-database-connectivity` | No database drivers (Firebird, MariaDB, PostgreSQL, LDAP) |
-| `--disable-python` | No Python scripting |
-| `--disable-scripting-beanshell` | No BeanShell (keep base scripting runtime — required) |
-| `--without-galleries/templates/help/fonts` | No bundled data files |
-
-## Docker caching
-
-The build uses BuildKit cache mounts for fast incremental rebuilds:
-
-- **`lo-src` cache**: Persists cloned LO source + compiled objects (`workdir/`). On rebuild, `make` only recompiles affected files.
-- **`ccache`**: Compiler cache for even faster recompilation.
-- **Config hash**: SHA-256 of `SlimLO.conf` + `patches/*.sh`. If unchanged, skips `autogen.sh` entirely (avoids timestamp cascade that triggers full recompile).
-
-```bash
-# Force full rebuild (clear caches)
-docker builder prune --filter type=exec.cachemount
+    ├── test.sh                         # Integration test (Docker-based)
+    ├── test_convert.c                  # C test program
+    └── test.docx                       # Test fixture (1,754 bytes)
 ```
 
 ## Runtime requirements
 
-- **Docker**: `--security-opt seccomp=unconfined` — LibreOffice uses `clone3()` for thread creation, which Docker's default seccomp profile blocks.
-- **Memory**: 16 GB+ recommended for Docker Desktop. Large LO source files need ~3 GB per compiler process.
-- **Bootstrap RC files**: The full chain `sofficerc → fundamentalrc → lounorc → unorc` must be present in `program/`. Missing any link breaks UNO service loading.
-- **Presets directory**: Must exist at `<install_root>/presets/` (not `share/presets/`). Can be empty.
-
-## C API reference
-
-```c
-// Initialize (once per process)
-SlimLOHandle slimlo_init(const char* resource_path);
-void slimlo_destroy(SlimLOHandle handle);
-
-// Convert
-SlimLOError slimlo_convert_file(handle, input_path, output_path, format_hint, options);
-SlimLOError slimlo_convert_buffer(handle, input_data, input_size, format_hint, options,
-                                   &output_data, &output_size);
-void slimlo_free_buffer(uint8_t* buffer);
-
-// Error handling
-const char* slimlo_get_error_message(SlimLOHandle handle);  // NULL handle for init errors
-const char* slimlo_version(void);
-```
-
-**Formats:** `SLIMLO_FORMAT_UNKNOWN` (auto-detect), `SLIMLO_FORMAT_DOCX`, `SLIMLO_FORMAT_XLSX`, `SLIMLO_FORMAT_PPTX`
-
-**PDF options:** version (PDF 1.7 / PDF/A-1,2,3), JPEG quality, DPI, tagged PDF, page range, password
-
-**Thread safety:** All conversions are serialized via internal mutex. For concurrency, use multiple processes.
-
-## Size reduction journey
-
-Full LibreOffice instdir is ~1.5 GB. SlimLO reduces it in two stages:
-
-**Stage 1 — Build-time stripping (1.5 GB → 300 MB):**
-8 patch scripts conditionally exclude 41+ modules at compile time via `ENABLE_SLIMLO` flag. Disabled features: database connectivity, Java, Python, GUI backends (GTK/Qt), desktop integration, galleries, templates, help, fonts. All code merges into a single `libmergedlo.so` via `--enable-mergelibs`.
-
-**Stage 2 — Artifact pruning (300 MB → 214 MB):**
-`extract-artifacts.sh` removes runtime files not needed for DOCX→PDF:
-
-| Removed | Size saved | Notes |
-|---------|-----------|-------|
-| Calc (`libsclo.so`, `libscfiltlo.so`) | 23 MB | Core + filters |
-| Import libraries (mwaw, etonyek, wps, ...) | 20 MB | Mac Word, Keynote, Works, ODF, WordPerfect |
-| Impress (`libsdlo.so`, `libslideshowlo.so`) | 10 MB | Core + slideshow engine |
-| soffice.cfg UI files | ~34 MB | Dialog XML, toolbars, menus for all modules |
-| Extra locale data | 7 MB | Keep only `liblocaledata_en.so` |
-| VBA macros (`libvbaobjlo.so`, `libvbaswobjlo.so`) | 5.4 MB | Not needed for conversion |
-| CUI dialogs (`libcuilo.so`) | 4 MB | UI-only, not used headless |
-| UI libraries (msforms, scriptframe, dlgprov, ...) | 2.1 MB | ActiveX forms, dialog provider, script UI |
-| Math (`libsmlo.so`) | 1.8 MB | Formula editor |
-| Misc (bibliography, scanner, add-ins, ...) | ~2 MB | 15+ minor libraries |
-| XCD config files | ~0.9 MB | Calc/Impress/Math/Base/Draw/xsltfilter config |
-
-**What must stay:**
-- Stub `.so` files (21-byte "invalid - merged lib") — UNO checks file existence before falling back to merged lib
-- `share/config/soffice.cfg/` directory structure (sfx, svx, svt, vcl) — LOKit needs dirs to exist for framework init
-- Runtime-linked externals (`libcurl`, `librdf-lo`, `libraptor2-lo`, `librasqal-lo`) — linked at build time by `libmergedlo.so`
-- `soffice.cfg/modules/swriter/` directory (can be empty) — Writer component registration
-
-**Result:** 118 .so + 19 .so.* libraries, 214 MB total (206 MB `program/` + 8 MB `share/`).
-
-## Roadmap
-
-### Further size reduction (214 MB → ~150 MB)
-
-- [ ] Re-enable LTO (`--enable-lto`) — dead code elimination at link time, could reduce `libmergedlo.so` by 20-30% (~97 MB → ~70 MB)
-- [ ] Reduce ICU data to only required locales
-
-### Multi-platform
-
-- [ ] True linux-x64 build (currently builds for host architecture)
-- [ ] linux-arm64 Dockerfile
-- [ ] macOS build (native, without Docker)
-- [ ] Windows build
-
-### .NET integration testing
-
-- [ ] End-to-end test with `SlimLO.Tests` (xUnit) inside Docker
-- [ ] NuGet package generation (`dotnet pack`) with per-RID native packages
-- [ ] CI pipeline for build + test + publish
-
-### CI/CD
-
-- [ ] GitHub Actions workflow for automated builds
-- [ ] Multi-arch Docker image publishing
-- [ ] NuGet package publishing to nuget.org or GitHub Packages
-
-### Future optimizations
-
-- [ ] Custom seccomp profile (allow `clone3` only, instead of `unconfined`)
-- [ ] Font subset embedding for smaller PDFs
-- [ ] Benchmark conversion performance and memory usage
+- **Docker seccomp**: `--security-opt seccomp=unconfined` required. LibreOffice uses `clone3()` for thread creation, blocked by Docker's default seccomp profile.
+- **Memory**: 16 GB+ for Docker Desktop during build. Runtime needs ~200 MB.
+- **Dependencies** (runtime image): `libfontconfig1`, `libfreetype6`, `libcairo2`, `libxml2`, `libxslt1.1`, `libicu74`, `libnss3`, `fonts-liberation`.
 
 ## License
 
-MPL-2.0 (matching LibreOffice's license). Built with `--enable-mpl-subset` to exclude GPL/LGPL components.
+MPL-2.0 (matching LibreOffice). Built with `--enable-mpl-subset` to exclude GPL/LGPL components.
