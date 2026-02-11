@@ -118,7 +118,7 @@ RUN --mount=type=cache,target=/build/lo-src \
     # Hash all inputs that affect configure: distro config + patch scripts.
     # If hash matches cached value, skip patching + autogen entirely
     # (preserves timestamps → make stays incremental).
-    CONFIG_HASH=$(cat distro-configs/SlimLO.conf patches/*.sh | sha256sum | cut -d' ' -f1) && \
+    CONFIG_HASH=$(cat distro-configs/SlimLO.conf patches/*.sh patches/*.postautogen | sha256sum | cut -d' ' -f1) && \
     if [ -f "lo-src/.slimlo-config-hash" ] && \
        [ "$(cat lo-src/.slimlo-config-hash)" = "$CONFIG_HASH" ] && \
        [ -f "lo-src/config_host.mk" ]; then \
@@ -129,12 +129,14 @@ RUN --mount=type=cache,target=/build/lo-src \
         cp distro-configs/SlimLO.conf lo-src/distro-configs/SlimLO.conf && \
         ./scripts/apply-patches.sh lo-src && \
         cd lo-src && ./autogen.sh --with-distro=SlimLO && cd /build && \
+        # Post-autogen patches (must run AFTER autogen generates platform .mk files)
+        bash ./patches/009-fix-nonmerged-lto-link.postautogen lo-src && \
         # Force re-link of merged lib (ldflags change not detected by make)
         rm -f lo-src/workdir/LinkTarget/Library/libmergedlo.so 2>/dev/null || true && \
         echo "$CONFIG_HASH" > lo-src/.slimlo-config-hash; \
     fi && \
     # --- Build ---
-    cd lo-src && make -j8 && \
+    cd lo-src && make -j10 && \
     cd /build && \
     # --- Extract artifacts to non-cached path ---
     ./scripts/extract-artifacts.sh lo-src/instdir /artifacts && \

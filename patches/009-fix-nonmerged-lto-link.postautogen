@@ -1,0 +1,96 @@
+#!/bin/bash
+# 009-fix-nonmerged-lto-link.postautogen
+# MUST run AFTER autogen.sh (autogen regenerates com_GCC_defs.mk from templates).
+# Restricts LTO to ONLY libmergedlo.so — disables it globally for all other targets.
+#
+# Problem: With --enable-lto + --enable-mergelibs, non-merged libraries
+# (libcuilo.so, libcairocanvaslo.so, soffice.bin, etc.) fail to link because
+# LTO eliminates symbols they reference from libmergedlo.so. These are dozens
+# of libraries/executables — patching each one individually is whack-a-mole.
+#
+# Solution: Clear gb_LTOFLAGS globally (in platform gcc.mk), then add explicit
+# -flto flags ONLY to Library_merged.mk. This way:
+#   - libmergedlo.so gets full LTO optimization (dead code elimination, inlining)
+#   - All other .so/.bin targets compile and link normally (no LTO link errors)
+#   - The merged lib is where 95%+ of the code lives, so LTO benefits are preserved
+set -euo pipefail
+
+LO_SRC="${1:?Missing LO source dir}"
+
+# --- Step 1: Find and patch the platform gcc.mk to disable global LTO ---
+# gb_LTOFLAGS is defined in solenv/gbuild/platform/ and applied to ALL targets.
+# We clear it so no target gets LTO by default.
+
+GCC_MK=""
+for candidate in \
+    "$LO_SRC/solenv/gbuild/platform/com_GCC_defs.mk" \
+    "$LO_SRC/solenv/gbuild/platform/gcc.mk" \
+    "$LO_SRC/solenv/gbuild/platform/unxgcc.inc.mk"; do
+    if [ -f "$candidate" ] && grep -q 'gb_LTOFLAGS' "$candidate"; then
+        GCC_MK="$candidate"
+        break
+    fi
+done
+
+if [ -z "$GCC_MK" ]; then
+    # Fallback: search for gb_LTOFLAGS in any gbuild .mk file
+    GCC_MK=$(grep -rl 'gb_LTOFLAGS\s*:=' "$LO_SRC/solenv/gbuild/" 2>/dev/null | head -1)
+fi
+
+if [ -z "$GCC_MK" ]; then
+    echo "    ERROR: Could not find gb_LTOFLAGS definition in gbuild"
+    echo "    Searched in: $LO_SRC/solenv/gbuild/platform/"
+    exit 1
+fi
+
+echo "    Found gb_LTOFLAGS in: $GCC_MK"
+
+if grep -q '# SlimLO: LTO disabled globally' "$GCC_MK"; then
+    echo "    gb_LTOFLAGS already cleared (skipping)"
+else
+    # Replace the gb_LTOFLAGS assignment(s) with empty value
+    # The original line(s) look like:
+    #   gb_LTOFLAGS := $(if $(filter TRUE,$(ENABLE_LTO)),-flto=$(LTO_NPROC) ...)
+    # We replace with empty, preserving the original as a comment
+    sed -E '/^gb_LTOFLAGS\s*:=/s|^|# SlimLO: LTO disabled globally (applied only to merged lib)\n# |' \
+        "$GCC_MK" > "$GCC_MK.tmp" && mv "$GCC_MK.tmp" "$GCC_MK"
+    # Add the override after the commented line
+    sed '/# SlimLO: LTO disabled globally/a\
+gb_LTOFLAGS :=' "$GCC_MK" > "$GCC_MK.tmp" && mv "$GCC_MK.tmp" "$GCC_MK"
+    echo "    Cleared gb_LTOFLAGS globally"
+fi
+
+# --- Step 2: Add explicit LTO flags to Library_merged.mk ---
+# Patch 008 already adds ldflags to merged. We need to also add -flto to
+# both cxxflags and ldflags so the merged lib gets LTO optimization.
+MERGED_MK="$LO_SRC/Library_merged.mk"
+
+if [ ! -f "$MERGED_MK" ]; then
+    echo "    ERROR: $MERGED_MK not found"
+    exit 1
+fi
+
+if grep -q 'gb_Library_add_cxxflags,merged.*-flto' "$MERGED_MK"; then
+    echo "    LTO cxxflags already added to merged (skipping)"
+else
+    TAB="$(printf '\t')"
+    TMPBLOCK=$(mktemp)
+    # Detect number of parallel LTO threads from nproc (or default to 4)
+    cat > "$TMPBLOCK" << BLOCKEOF
+
+# SlimLO: explicit LTO for merged lib only
+\$(eval \$(call gb_Library_add_cxxflags,merged,\\
+${TAB}-flto=auto \\
+))
+
+\$(eval \$(call gb_Library_add_ldflags,merged,\\
+${TAB}-flto=auto \\
+))
+BLOCKEOF
+    # Insert after gb_Library_Library,merged
+    sed "/gb_Library_Library,merged/r $TMPBLOCK" "$MERGED_MK" > "$MERGED_MK.tmp" && mv "$MERGED_MK.tmp" "$MERGED_MK"
+    rm -f "$TMPBLOCK"
+    echo "    Added explicit -flto=auto to Library_merged.mk"
+fi
+
+echo "    Patch 009 complete"
