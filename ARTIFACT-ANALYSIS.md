@@ -196,29 +196,27 @@ Per conversione DOCX→PDF servono solo i locale europei/inglesi.
 **Risultato atteso**: 30 MB → ~2-5 MB.
 **Difficolta**: Alta — richiede custom ICU build nel Dockerfile.
 
-### 2. Stub libcurl.so.4 (risparmio ~4.6 MB) — MEDIA priorita
+### 2. ~~Stub libcurl.so.4~~ (risparmio ~4.6 MB) — **FATTO**
 
 `libcurl.so.4` è NEEDED da `libmergedlo.so` ma mai usato per conversione locale.
+**Soluzione applicata**: `patchelf --remove-needed libcurl.so.4` in `extract-artifacts.sh`, poi eliminazione del file.
 
-**Opzioni**:
-- `patchelf --remove-needed libcurl.so.4 libmergedlo.so` (rapido, fragile)
-- Creare uno stub .so con 9 simboli no-op (curl_easy_init, etc.)
-- Ricostruire senza i moduli UCB HTTP (--disable-online-update + strip ucpdav1)
+### 3. ~~Stub RDF stack~~ — **NON POSSIBILE**
 
-### 3. Stub RDF stack (risparmio ~1.1 MB) — BASSA priorita
-
-`librdf-lo.so.0` + `libraptor2-lo.so.0` + `librasqal-lo.so.3` sono NEEDED ma usati solo per metadati ODF.
-
-**Opzioni**: come libcurl — patchelf o stub con ~64 simboli no-op.
+`librdf-lo.so.0` + `libraptor2-lo.so.0` + `librasqal-lo.so.3` sono NEEDED **e chiamati a runtime** (`librdf_new_world`).
+Testato con patchelf: causa `undefined symbol: librdf_new_world` al momento della conversione.
 
 ### Riepilogo potenziale
 
-| Azione | Risparmio | Da → A | Difficolta |
-|--------|-----------|--------|------------|
-| ICU data filter | ~25-28 MB | 191 → ~163 MB | Alta |
-| Stub libcurl | ~4.6 MB | → ~159 MB | Media |
-| Stub RDF stack | ~1.1 MB | → ~158 MB | Bassa |
-| **Totale** | **~31-34 MB** | **191 → ~158 MB** | |
+| Azione | Risparmio | Da → A | Difficolta | Stato |
+|--------|-----------|--------|------------|-------|
+| patchelf libcurl | ~4.6 MB | 191 → 186 MB | Bassa | **FATTO** |
+| Rimuovere oovbaapi.rdb | ~347 KB | → 186 MB | Nulla | **FATTO** |
+| Rimuovere lingucomponent.xcd | ~2 KB | → 186 MB | Nulla | **FATTO** |
+| Rimuovere signature SVGs | ~18 KB | → 186 MB | Nulla | **FATTO** |
+| ICU data filter | ~25-28 MB | → ~158 MB | Alta | Futuro |
+| ~~Stub RDF stack~~ | ~~~1.1 MB~~ | — | — | **Non possibile** |
+| ~~Rimuovere .ui files~~ | ~~~3.5 MB~~ | — | — | **Non possibile** (LOKit le carica) |
 
 ---
 

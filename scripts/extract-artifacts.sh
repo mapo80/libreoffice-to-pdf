@@ -186,6 +186,41 @@ for xcd in math base xsltfilter ogltrans ctlseqcheck cjk impress calc draw; do
 done
 
 # -----------------------------------------------------------
+# 7d. Remove signature SVG files (not needed for rendering)
+# -----------------------------------------------------------
+rm -f "$OUTPUT_DIR/share/filter/signature-line.svg"
+rm -f "$OUTPUT_DIR/share/filter/signature-line-draw.svg"
+
+# -----------------------------------------------------------
+# 7e. Remove VBA type registry (no macro execution needed)
+# -----------------------------------------------------------
+rm -f "$OUTPUT_DIR/program/types/oovbaapi.rdb"
+
+# -----------------------------------------------------------
+# 7f. Remove lingucomponent XCD (spellcheck — not needed for conversion)
+# -----------------------------------------------------------
+rm -f "$OUTPUT_DIR/share/registry/lingucomponent.xcd"
+
+# -----------------------------------------------------------
+# 7g. Remove NEEDED-but-unused external libraries via patchelf
+#     libcurl.so.4 is NEEDED by libmergedlo.so but never called for local conversion.
+#     NOTE: librdf/libraptor2/librasqal CANNOT be removed — called at runtime.
+# -----------------------------------------------------------
+echo "  Removing unused NEEDED libraries via patchelf..."
+MERGEDSO_PRE="$OUTPUT_DIR/program/libmergedlo.so"
+if command -v patchelf &>/dev/null && [ -f "$MERGEDSO_PRE" ]; then
+    for needlib in libcurl.so.4; do
+        if readelf -d "$MERGEDSO_PRE" 2>/dev/null | grep -q "$needlib"; then
+            patchelf --remove-needed "$needlib" "$MERGEDSO_PRE"
+            rm -f "$OUTPUT_DIR/program/$needlib"
+            echo "    Removed NEEDED + file: $needlib"
+        fi
+    done
+else
+    echo "    patchelf not available — skipping NEEDED removal"
+fi
+
+# -----------------------------------------------------------
 # 8. Strip binaries to reduce size
 # -----------------------------------------------------------
 echo "  Stripping binaries..."

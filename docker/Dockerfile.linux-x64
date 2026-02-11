@@ -35,7 +35,7 @@ RUN sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.s
 # with equivs to satisfy the dependency (we disable Firebird SDBC anyway).
 RUN apt-get update && apt-get -y install \
         build-essential git autoconf automake libtool pkg-config \
-        ccache nasm flex bison gperf zip unzip wget \
+        ccache nasm flex bison gperf zip unzip wget patchelf \
         python3 python3-setuptools \
         cmake meson ninja-build equivs \
     && printf 'Section: libs\nPackage: libfbclient2\nProvides: libfbclient2\nDescription: dummy\n' | equivs-build - \
