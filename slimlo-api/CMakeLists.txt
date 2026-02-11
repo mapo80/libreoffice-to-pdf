@@ -63,10 +63,14 @@ endif()
 if(NOT WIN32)
     set_target_properties(slimlo PROPERTIES
         BUILD_RPATH "${INSTDIR}/program"
-        INSTALL_RPATH "$ORIGIN"
         VERSION ${PROJECT_VERSION}
         SOVERSION 0
     )
+    if(APPLE)
+        set_target_properties(slimlo PROPERTIES INSTALL_RPATH "@loader_path")
+    else()
+        set_target_properties(slimlo PROPERTIES INSTALL_RPATH "$ORIGIN")
+    endif()
 endif()
 
 # Install
