@@ -53,12 +53,16 @@ FROM deps AS builder
 
 ENV CCACHE_DIR=/ccache \
     CCACHE_COMPRESS=1 \
-    CCACHE_MAXSIZE=32G
+    CCACHE_MAXSIZE=32G \
+    ICU_DATA_FILTER_FILE=/build/icu-filter.json \
+    LDFLAGS="-Wl,--gc-sections" \
+    ax_cv_c_float_words_bigendian=no
 
 WORKDIR /build
 
 # Copy project files ordered by change frequency (least → most).
 COPY LO_VERSION .
+COPY icu-filter.json .
 COPY slimlo-api/ slimlo-api/
 COPY scripts/ scripts/
 COPY distro-configs/ distro-configs/
@@ -118,7 +122,7 @@ RUN --mount=type=cache,target=/build/lo-src \
     # Hash all inputs that affect configure: distro config + patch scripts.
     # If hash matches cached value, skip patching + autogen entirely
     # (preserves timestamps → make stays incremental).
-    CONFIG_HASH=$(cat distro-configs/SlimLO.conf patches/*.sh patches/*.postautogen | sha256sum | cut -d' ' -f1) && \
+    CONFIG_HASH=$(cat distro-configs/SlimLO.conf patches/*.sh patches/*.postautogen icu-filter.json | sha256sum | cut -d' ' -f1) && \
     if [ -f "lo-src/.slimlo-config-hash" ] && \
        [ "$(cat lo-src/.slimlo-config-hash)" = "$CONFIG_HASH" ] && \
        [ -f "lo-src/config_host.mk" ]; then \
