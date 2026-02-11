@@ -199,7 +199,7 @@ find "$OUTPUT_DIR/program" -name "*.dylib" -exec strip -x {} \; 2>/dev/null || t
 echo "  Verifying constructor symbol visibility..."
 MERGEDSO="$OUTPUT_DIR/program/libmergedlo.so"
 if [ -f "$MERGEDSO" ]; then
-    CTOR_COUNT=$(readelf --dyn-syms "$MERGEDSO" 2>/dev/null | grep -c "get_implementation" || echo "0")
+    CTOR_COUNT=$(readelf --dyn-syms -W "$MERGEDSO" 2>/dev/null | grep -c "get_implementation" || echo "0")
     echo "  Constructor symbols in .dynsym: $CTOR_COUNT"
     if [ "$CTOR_COUNT" -eq 0 ] 2>/dev/null; then
         echo "  WARNING: No constructor symbols found in libmergedlo.so .dynsym!"
