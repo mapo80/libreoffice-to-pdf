@@ -1,57 +1,86 @@
-using System.Runtime.InteropServices;
-using SlimLO.Native;
+using SlimLO.Internal;
 
 namespace SlimLO;
 
 /// <summary>
-/// High-level API for converting OOXML documents to PDF.
-/// Wraps the SlimLO native library (built on LibreOffice).
+/// Enterprise-grade PDF converter for OOXML documents (DOCX, XLSX, PPTX).
 ///
-/// Thread safety: All conversion calls are serialized internally.
-/// For concurrent conversions, use multiple processes.
+/// <para><b>Thread safety:</b> All methods are fully thread-safe. Multiple threads
+/// can call <see cref="ConvertAsync(string, string, ConversionOptions?, CancellationToken)"/>
+/// concurrently. With <see cref="PdfConverterOptions.MaxWorkers"/> greater than 1,
+/// conversions run in parallel across separate worker processes.</para>
 ///
-/// Usage:
-///   using var converter = PdfConverter.Create("/path/to/slimlo/resources");
-///   converter.ConvertToPdf("input.docx", "output.pdf");
+/// <para><b>Crash resilience:</b> Conversions run in isolated worker processes.
+/// If LibreOffice crashes on a malformed document, the worker is automatically
+/// replaced and the conversion returns a failure result. The host .NET process
+/// is never affected.</para>
+///
+/// <para><b>Font support:</b> Custom font directories can be specified via
+/// <see cref="PdfConverterOptions.FontDirectories"/>. Font substitution warnings
+/// are reported in <see cref="ConversionResult.Diagnostics"/>.</para>
+///
+/// <example>
+/// <code>
+/// await using var converter = PdfConverter.Create(new PdfConverterOptions
+/// {
+///     FontDirectories = ["/usr/share/fonts/custom"],
+///     MaxWorkers = 2
+/// });
+///
+/// var result = await converter.ConvertAsync("input.docx", "output.pdf");
+/// if (result.HasFontWarnings)
+///     foreach (var d in result.Diagnostics)
+///         Console.WriteLine($"  {d.Severity}: {d.Message}");
+/// </code>
+/// </example>
 /// </summary>
-public sealed class PdfConverter : IDisposable
+public sealed class PdfConverter : IAsyncDisposable, IDisposable
 {
-    private IntPtr _handle;
-    private bool _disposed;
-    private static readonly object _initLock = new();
-    private static PdfConverter? _instance;
+    private readonly WorkerPool _pool;
+    private volatile bool _disposed;
+    private int _requestId;
 
-    private PdfConverter(string resourcePath)
+    private PdfConverter(WorkerPool pool)
     {
-        _handle = NativeMethods.Init(resourcePath);
-        if (_handle == IntPtr.Zero)
-        {
-            var error = NativeMethods.GetErrorMessage(IntPtr.Zero) ?? "Unknown initialization error";
-            throw new SlimLOException(error, SlimLOErrorCode.InitFailed);
-        }
+        _pool = pool;
     }
 
     /// <summary>
     /// Create a new PdfConverter instance.
-    /// Only one instance may exist per process (LibreOffice limitation).
+    /// Multiple instances with different configurations are allowed.
+    /// Workers start lazily on first conversion unless <see cref="PdfConverterOptions.WarmUp"/> is true.
     /// </summary>
-    /// <param name="resourcePath">
-    /// Path to the SlimLO resources directory (containing program/, share/, etc.).
-    /// If null, attempts auto-detection from the native library location.
-    /// </param>
-    public static PdfConverter Create(string? resourcePath = null)
+    /// <param name="options">Converter configuration. Null for defaults (auto-detect paths, 1 worker).</param>
+    /// <returns>A new PdfConverter instance. Dispose when no longer needed.</returns>
+    /// <exception cref="FileNotFoundException">Worker executable not found.</exception>
+    /// <exception cref="InvalidOperationException">Resource path could not be auto-detected.</exception>
+    public static PdfConverter Create(PdfConverterOptions? options = null)
     {
-        lock (_initLock)
-        {
-            if (_instance != null && !_instance._disposed)
-                throw new InvalidOperationException(
-                    "Only one PdfConverter instance is allowed per process. " +
-                    "Dispose the existing instance before creating a new one.");
+        options ??= new PdfConverterOptions();
 
-            var path = resourcePath ?? DetectResourcePath();
-            _instance = new PdfConverter(path);
-            return _instance;
+        if (options.MaxWorkers < 1)
+            throw new ArgumentOutOfRangeException(
+                nameof(options), "MaxWorkers must be at least 1");
+
+        var workerPath = WorkerLocator.FindWorkerExecutable();
+        var resourcePath = options.ResourcePath ?? WorkerLocator.FindResourcePath();
+
+        var pool = new WorkerPool(
+            workerPath,
+            resourcePath,
+            options.FontDirectories,
+            options.MaxWorkers,
+            options.MaxConversionsPerWorker,
+            options.ConversionTimeout);
+
+        var converter = new PdfConverter(pool);
+
+        if (options.WarmUp)
+        {
+            pool.WarmUpAsync(CancellationToken.None).GetAwaiter().GetResult();
         }
+
+        return converter;
     }
 
     /// <summary>
@@ -59,315 +88,160 @@ public sealed class PdfConverter : IDisposable
     /// </summary>
     /// <param name="inputPath">Path to input document (.docx, .xlsx, .pptx).</param>
     /// <param name="outputPath">Path for output PDF file.</param>
-    /// <param name="options">PDF conversion options (null for defaults).</param>
-    public void ConvertToPdf(string inputPath, string outputPath, PdfOptions? options = null)
+    /// <param name="options">PDF conversion options. Null for defaults.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>
+    /// Conversion result with diagnostics. Check <see cref="ConversionResult.Success"/>
+    /// or use implicit bool conversion. Call <see cref="ConversionResult.ThrowIfFailed"/>
+    /// to throw on failure.
+    /// </returns>
+    public async Task<ConversionResult> ConvertAsync(
+        string inputPath,
+        string outputPath,
+        ConversionOptions? options = null,
+        CancellationToken cancellationToken = default)
     {
-        ThrowIfDisposed();
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentException.ThrowIfNullOrEmpty(inputPath);
+        ArgumentException.ThrowIfNullOrEmpty(outputPath);
 
-        if (string.IsNullOrEmpty(inputPath))
-            throw new ArgumentException("Input path is required.", nameof(inputPath));
-        if (string.IsNullOrEmpty(outputPath))
-            throw new ArgumentException("Output path is required.", nameof(outputPath));
+        inputPath = Path.GetFullPath(inputPath);
+        outputPath = Path.GetFullPath(outputPath);
+
+        if (!File.Exists(inputPath))
+            return ConversionResult.Fail(
+                $"Input file not found: {inputPath}",
+                SlimLOErrorCode.FileNotFound, null);
 
         var format = DetectFormat(inputPath);
-        int result;
+        var requestId = Interlocked.Increment(ref _requestId);
 
-        if (options == null)
+        var request = new ConvertRequest
         {
-            result = NativeMethods.ConvertFileNoOptions(
-                _handle, inputPath, outputPath, (int)format, IntPtr.Zero);
-        }
-        else
-        {
-            using var nativeOptions = MarshalOptions(options);
-            var opts = nativeOptions.Value;
-            result = NativeMethods.ConvertFile(
-                _handle, inputPath, outputPath, (int)format, ref opts);
-        }
+            Id = requestId,
+            Input = inputPath,
+            Output = outputPath,
+            Format = (int)format,
+            Options = ConvertRequestOptions.FromConversionOptions(options)
+        };
 
-        if (result != 0)
-        {
-            var error = NativeMethods.GetErrorMessage(_handle) ?? "Conversion failed";
-            throw new SlimLOException(error, (SlimLOErrorCode)result);
-        }
+        return await _pool.ExecuteAsync(request, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
-    /// Convert a document from a byte array to PDF.
+    /// Convert an in-memory document to PDF bytes.
     /// </summary>
     /// <param name="input">Input document bytes.</param>
-    /// <param name="format">Document format (required for buffer conversion).</param>
-    /// <param name="options">PDF conversion options (null for defaults).</param>
-    /// <returns>PDF file bytes.</returns>
-    public byte[] ConvertToPdf(ReadOnlySpan<byte> input, DocumentFormat format, PdfOptions? options = null)
+    /// <param name="format">Document format (required — cannot auto-detect from bytes).</param>
+    /// <param name="options">PDF conversion options. Null for defaults.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>
+    /// Conversion result with PDF bytes in <see cref="ConversionResult{T}.Data"/>.
+    /// Data is null if conversion failed.
+    /// </returns>
+    public async Task<ConversionResult<byte[]>> ConvertAsync(
+        ReadOnlyMemory<byte> input,
+        DocumentFormat format,
+        ConversionOptions? options = null,
+        CancellationToken cancellationToken = default)
     {
-        ThrowIfDisposed();
+        ObjectDisposedException.ThrowIf(_disposed, this);
 
         if (input.IsEmpty)
-            throw new ArgumentException("Input data is required.", nameof(input));
+            return ConversionResult<byte[]>.Fail(
+                "Input data is empty",
+                SlimLOErrorCode.InvalidArgument, null);
+
         if (format == DocumentFormat.Unknown)
-            throw new ArgumentException("Format must be specified for buffer conversion.", nameof(format));
+            return ConversionResult<byte[]>.Fail(
+                "Format must be specified for buffer conversion",
+                SlimLOErrorCode.InvalidFormat, null);
 
-        unsafe
+        var ext = format switch
         {
-            fixed (byte* inputPtr = input)
+            DocumentFormat.Docx => ".docx",
+            DocumentFormat.Xlsx => ".xlsx",
+            DocumentFormat.Pptx => ".pptx",
+            _ => ".tmp"
+        };
+
+        var tempDir = Path.Combine(Path.GetTempPath(), "slimlo");
+        Directory.CreateDirectory(tempDir);
+
+        var tempInput = Path.Combine(tempDir, $"{Guid.NewGuid():N}{ext}");
+        var tempOutput = Path.Combine(tempDir, $"{Guid.NewGuid():N}.pdf");
+
+        try
+        {
+            await File.WriteAllBytesAsync(tempInput, input.ToArray(), cancellationToken)
+                .ConfigureAwait(false);
+
+            var result = await ConvertAsync(tempInput, tempOutput, options, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (result.Success && File.Exists(tempOutput))
             {
-                int result;
-                IntPtr outputData;
-                nuint outputSize;
-
-                if (options == null)
-                {
-                    result = NativeMethods.ConvertBufferNoOptions(
-                        _handle, (IntPtr)inputPtr, (nuint)input.Length,
-                        (int)format, IntPtr.Zero, out outputData, out outputSize);
-                }
-                else
-                {
-                    using var nativeOptions = MarshalOptions(options);
-                    var opts = nativeOptions.Value;
-                    result = NativeMethods.ConvertBuffer(
-                        _handle, (IntPtr)inputPtr, (nuint)input.Length,
-                        (int)format, ref opts, out outputData, out outputSize);
-                }
-
-                if (result != 0)
-                {
-                    var error = NativeMethods.GetErrorMessage(_handle) ?? "Conversion failed";
-                    throw new SlimLOException(error, (SlimLOErrorCode)result);
-                }
-
-                try
-                {
-                    var output = new byte[(int)outputSize];
-                    Marshal.Copy(outputData, output, 0, (int)outputSize);
-                    return output;
-                }
-                finally
-                {
-                    NativeMethods.FreeBuffer(outputData);
-                }
+                var pdfBytes = await File.ReadAllBytesAsync(tempOutput, cancellationToken)
+                    .ConfigureAwait(false);
+                return ConversionResult<byte[]>.Ok(pdfBytes, result.Diagnostics);
             }
+
+            return ConversionResult<byte[]>.Fail(
+                result.ErrorMessage ?? "Conversion failed",
+                result.ErrorCode ?? SlimLOErrorCode.Unknown,
+                result.Diagnostics);
         }
-    }
-
-    /// <summary>
-    /// Convert a document file to PDF asynchronously.
-    /// Runs the conversion on the thread pool since LibreOffice is synchronous.
-    /// </summary>
-    public Task ConvertToPdfAsync(string inputPath, string outputPath,
-        PdfOptions? options = null, CancellationToken cancellationToken = default)
-    {
-        return Task.Run(() => ConvertToPdf(inputPath, outputPath, options), cancellationToken);
-    }
-
-    /// <summary>
-    /// Convert a document from a byte array to PDF asynchronously.
-    /// </summary>
-    public Task<byte[]> ConvertToPdfAsync(byte[] input, DocumentFormat format,
-        PdfOptions? options = null, CancellationToken cancellationToken = default)
-    {
-        return Task.Run(() => ConvertToPdf(input, format, options), cancellationToken);
+        finally
+        {
+            try { File.Delete(tempInput); } catch { /* best effort */ }
+            try { File.Delete(tempOutput); } catch { /* best effort */ }
+        }
     }
 
     /// <summary>
     /// Get the SlimLO library version string.
+    /// Falls back to native in-process call if no workers are running.
     /// </summary>
-    public static string? GetVersion() => NativeMethods.GetVersion();
+    public static string? Version
+    {
+        get
+        {
+            try
+            {
+                return NativeMethods.GetVersion();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+    }
 
+    /// <summary>Dispose the converter and all worker processes.</summary>
+    public async ValueTask DisposeAsync()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        await _pool.DisposeAsync().ConfigureAwait(false);
+    }
+
+    /// <summary>Synchronous dispose fallback.</summary>
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
-
-        if (_handle != IntPtr.Zero)
-        {
-            NativeMethods.Destroy(_handle);
-            _handle = IntPtr.Zero;
-        }
-
-        lock (_initLock)
-        {
-            if (_instance == this)
-                _instance = null;
-        }
-    }
-
-    private void ThrowIfDisposed()
-    {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        _pool.DisposeAsync().AsTask().GetAwaiter().GetResult();
     }
 
     private static DocumentFormat DetectFormat(string path)
     {
-        var ext = Path.GetExtension(path)?.ToLowerInvariant();
-        return ext switch
+        var ext = Path.GetExtension(path);
+        return ext?.ToLowerInvariant() switch
         {
             ".docx" => DocumentFormat.Docx,
             ".xlsx" => DocumentFormat.Xlsx,
             ".pptx" => DocumentFormat.Pptx,
             _ => DocumentFormat.Unknown
         };
-    }
-
-    private static string DetectResourcePath()
-    {
-        // Try to find resources relative to the native library
-        var assemblyDir = Path.GetDirectoryName(typeof(PdfConverter).Assembly.Location);
-        if (assemblyDir == null)
-            throw new InvalidOperationException("Cannot detect resource path. Provide it explicitly.");
-
-        // Check common locations
-        string[] candidates =
-        [
-            Path.Combine(assemblyDir, "slimlo-resources"),
-            Path.Combine(assemblyDir, "..", "slimlo-resources"),
-            Path.Combine(assemblyDir, "runtimes", RuntimeInformation.RuntimeIdentifier, "native", "slimlo-resources"),
-        ];
-
-        foreach (var candidate in candidates)
-        {
-            if (Directory.Exists(Path.Combine(candidate, "program")))
-                return Path.GetFullPath(candidate);
-        }
-
-        // Check SLIMLO_RESOURCE_PATH environment variable
-        var envPath = Environment.GetEnvironmentVariable("SLIMLO_RESOURCE_PATH");
-        if (!string.IsNullOrEmpty(envPath) && Directory.Exists(Path.Combine(envPath, "program")))
-            return envPath;
-
-        throw new InvalidOperationException(
-            "Cannot auto-detect SlimLO resource path. " +
-            "Set SLIMLO_RESOURCE_PATH environment variable or pass the path to PdfConverter.Create().");
-    }
-
-    private static MarshaledOptions MarshalOptions(PdfOptions options)
-    {
-        return new MarshaledOptions(options);
-    }
-}
-
-/// <summary>
-/// Helper to marshal PdfOptions to native struct, handling string pinning.
-/// </summary>
-internal sealed class MarshaledOptions : IDisposable
-{
-    private GCHandle _pageRangeHandle;
-    private GCHandle _passwordHandle;
-    private byte[]? _pageRangeBytes;
-    private byte[]? _passwordBytes;
-
-    public PdfOptionsNative Value { get; }
-
-    public MarshaledOptions(PdfOptions options)
-    {
-        var native = new PdfOptionsNative
-        {
-            PdfVersion = (int)options.Version,
-            JpegQuality = options.JpegQuality,
-            Dpi = options.Dpi,
-            TaggedPdf = options.TaggedPdf ? 1 : 0
-        };
-
-        if (options.PageRange != null)
-        {
-            _pageRangeBytes = System.Text.Encoding.UTF8.GetBytes(options.PageRange + '\0');
-            _pageRangeHandle = GCHandle.Alloc(_pageRangeBytes, GCHandleType.Pinned);
-            native.PageRange = _pageRangeHandle.AddrOfPinnedObject();
-        }
-
-        if (options.Password != null)
-        {
-            _passwordBytes = System.Text.Encoding.UTF8.GetBytes(options.Password + '\0');
-            _passwordHandle = GCHandle.Alloc(_passwordBytes, GCHandleType.Pinned);
-            native.Password = _passwordHandle.AddrOfPinnedObject();
-        }
-
-        Value = native;
-    }
-
-    public void Dispose()
-    {
-        if (_pageRangeHandle.IsAllocated) _pageRangeHandle.Free();
-        if (_passwordHandle.IsAllocated) _passwordHandle.Free();
-    }
-}
-
-/// <summary>
-/// Document format for input files.
-/// </summary>
-public enum DocumentFormat
-{
-    Unknown = 0,
-    Docx = 1,
-    Xlsx = 2,
-    Pptx = 3
-}
-
-/// <summary>
-/// PDF output version.
-/// </summary>
-public enum PdfVersion
-{
-    Default = 0,
-    PdfA1 = 1,
-    PdfA2 = 2,
-    PdfA3 = 3
-}
-
-/// <summary>
-/// PDF conversion options.
-/// </summary>
-public record PdfOptions
-{
-    /// <summary>PDF version (Default = PDF 1.7).</summary>
-    public PdfVersion Version { get; init; } = PdfVersion.Default;
-
-    /// <summary>JPEG compression quality 1-100 (0 = default 90).</summary>
-    public int JpegQuality { get; init; } = 0;
-
-    /// <summary>Maximum image resolution in DPI (0 = default 300).</summary>
-    public int Dpi { get; init; } = 0;
-
-    /// <summary>Generate tagged PDF for accessibility.</summary>
-    public bool TaggedPdf { get; init; } = false;
-
-    /// <summary>Page range, e.g. "1-3" (null = all pages).</summary>
-    public string? PageRange { get; init; }
-
-    /// <summary>Password for protected documents (null = none).</summary>
-    public string? Password { get; init; }
-}
-
-/// <summary>
-/// Error codes from the SlimLO native library.
-/// </summary>
-public enum SlimLOErrorCode
-{
-    Ok = 0,
-    InitFailed = 1,
-    LoadFailed = 2,
-    ExportFailed = 3,
-    InvalidFormat = 4,
-    FileNotFound = 5,
-    OutOfMemory = 6,
-    PermissionDenied = 7,
-    AlreadyInitialized = 8,
-    NotInitialized = 9,
-    InvalidArgument = 10,
-    Unknown = 99
-}
-
-/// <summary>
-/// Exception thrown by SlimLO operations.
-/// </summary>
-public class SlimLOException : Exception
-{
-    public SlimLOErrorCode ErrorCode { get; }
-
-    public SlimLOException(string message, SlimLOErrorCode errorCode = SlimLOErrorCode.Unknown)
-        : base(message)
-    {
-        ErrorCode = errorCode;
     }
 }

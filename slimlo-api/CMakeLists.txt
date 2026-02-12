@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(slimlo VERSION 0.1.0 LANGUAGES CXX)
+project(slimlo VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -91,8 +91,32 @@ if(NOT WIN32)
     endif()
 endif()
 
+# SlimLO worker executable (used by .NET SDK for out-of-process conversion)
+add_executable(slimlo_worker
+    src/slimlo_worker.c
+    src/cjson/cJSON.c
+)
+
+target_include_directories(slimlo_worker PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(slimlo_worker PRIVATE slimlo)
+
+if(NOT WIN32)
+    set_target_properties(slimlo_worker PROPERTIES
+        BUILD_RPATH "${LO_LIB_DIR}"
+    )
+    if(APPLE)
+        set_target_properties(slimlo_worker PROPERTIES INSTALL_RPATH "@loader_path")
+    else()
+        set_target_properties(slimlo_worker PROPERTIES INSTALL_RPATH "$ORIGIN")
+    endif()
+endif()
+
 # Install
-install(TARGETS slimlo
+install(TARGETS slimlo slimlo_worker
     LIBRARY DESTINATION lib
     RUNTIME DESTINATION bin
 )

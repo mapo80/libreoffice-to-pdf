@@ -13,10 +13,15 @@ SlimLO is **not a fork**. It applies idempotent patch scripts to vanilla LibreOf
                          |
          ----------------+----------------
          |                                |
-    .NET (P/Invoke)                  C (direct)
+    .NET SDK (async)                 C (direct)
          |                                |
-    PdfConverter.cs               #include "slimlo.h"
+    PdfConverter                  #include "slimlo.h"
          |                                |
+    WorkerPool                            |
+    ├─ slimlo_worker[0] ──stdin/stdout──┐ |
+    ├─ slimlo_worker[1] ──stdin/stdout──┼─+
+    └─ ...                              |
+                                        |
          +--------- libslimlo.{so,dylib,dll} --------+
                          |
                    LibreOfficeKit
@@ -167,28 +172,176 @@ int main() {
 
 **Thread safety:** Conversions are serialized via internal mutex. For concurrency, use multiple processes.
 
-## Using the .NET wrapper
+## Using the .NET SDK
+
+The .NET SDK provides an enterprise-grade, process-isolated API for OOXML-to-PDF conversion. Each conversion runs in a separate native worker process — a crash on a malformed document never affects the host .NET process.
+
+### Quick start
 
 ```csharp
 using SlimLO;
 
-using var converter = PdfConverter.Create("/opt/slimlo");
+await using var converter = PdfConverter.Create();
 
 // File to file
-converter.ConvertToPdf("input.docx", "output.pdf");
+var result = await converter.ConvertAsync("input.docx", "output.pdf");
+result.ThrowIfFailed();
 
-// With options
-converter.ConvertToPdf("input.docx", "output.pdf", new PdfOptions
+// Check for font warnings
+if (result.HasFontWarnings)
+    foreach (var d in result.Diagnostics)
+        Console.WriteLine($"  {d.Severity}: {d.Message}");
+```
+
+### Full API examples
+
+```csharp
+using SlimLO;
+
+// --- Create with options ---
+await using var converter = PdfConverter.Create(new PdfConverterOptions
 {
-    Version = PdfVersion.PdfA2,
-    JpegQuality = 85,
-    Dpi = 150
+    ResourcePath = "/opt/slimlo",             // auto-detected if not set
+    FontDirectories = ["/app/fonts"],         // extra font directories (SAL_FONTPATH)
+    MaxWorkers = 2,                           // parallel worker processes
+    MaxConversionsPerWorker = 100,            // recycle after N conversions
+    ConversionTimeout = TimeSpan.FromMinutes(5),
+    WarmUp = true                             // pre-start workers
 });
 
-// Buffer to buffer
-byte[] pdfBytes = converter.ConvertToPdf(
-    File.ReadAllBytes("input.docx"), DocumentFormat.Docx);
+// --- File conversion ---
+var result = await converter.ConvertAsync("input.docx", "output.pdf");
+if (!result)  // implicit bool conversion
+    Console.Error.WriteLine($"Failed: {result.ErrorMessage} ({result.ErrorCode})");
+
+// --- Buffer conversion ---
+byte[] docxBytes = await File.ReadAllBytesAsync("input.docx");
+var bufResult = await converter.ConvertAsync(
+    docxBytes.AsMemory(), DocumentFormat.Docx);
+bufResult.ThrowIfFailed();
+await File.WriteAllBytesAsync("output.pdf", bufResult.Data!);
+
+// --- With PDF options ---
+var result2 = await converter.ConvertAsync("input.docx", "output.pdf",
+    new ConversionOptions
+    {
+        PdfVersion = PdfVersion.PdfA2,
+        JpegQuality = 85,
+        Dpi = 150,
+        TaggedPdf = true,
+        PageRange = "1-5"
+    });
 ```
+
+### Architecture
+
+```
+.NET Application
+┌──────────────────────────────────────────────────────┐
+│  PdfConverter (public API)                           │
+│  ├─ WorkerPool (thread-safe, round-robin dispatch)   │
+│  │   ├─ WorkerProcess[0] ──stdin/stdout──> slimlo_worker
+│  │   ├─ WorkerProcess[1] ──stdin/stdout──> slimlo_worker
+│  │   └─ ...                                          │
+│  └─ StderrDiagnosticParser (font warnings)           │
+└──────────────────────────────────────────────────────┘
+```
+
+- **Process isolation**: Each `slimlo_worker` is a native C executable. LOKit runs in a separate OS process — a SIGSEGV on a corrupt document kills only the worker, not your app.
+- **IPC protocol**: Length-prefixed JSON over stdin/stdout pipes. Simple, debuggable, no shared memory.
+- **Thread safety**: With `MaxWorkers > 1`, conversions run in true parallel across separate OS processes, each with its own LOKit instance.
+- **Crash recovery**: Broken pipe detected → failure result returned → worker auto-replaced on next call.
+- **Font diagnostics**: Worker captures LOKit stderr during each conversion. Font substitution warnings are parsed into `ConversionDiagnostic` objects.
+
+### API reference
+
+**`PdfConverter`** — Main entry point. `IAsyncDisposable` + `IDisposable`.
+
+| Method | Description |
+|--------|-------------|
+| `Create(options?)` | Create a new converter instance. Workers start lazily (or eagerly with `WarmUp = true`). |
+| `ConvertAsync(inputPath, outputPath, options?, ct)` | Convert a file to PDF. Returns `ConversionResult`. |
+| `ConvertAsync(input, format, options?, ct)` | Convert in-memory bytes to PDF. Returns `ConversionResult<byte[]>`. |
+| `Version` | Static property — SlimLO native library version string. |
+
+**`ConversionResult`** — Conversion outcome with diagnostics.
+
+| Member | Description |
+|--------|-------------|
+| `Success` | `true` if conversion succeeded. |
+| `ErrorMessage` | Error description (null on success). |
+| `ErrorCode` | `SlimLOErrorCode` enum value (null on success). |
+| `Diagnostics` | `IReadOnlyList<ConversionDiagnostic>` — font warnings, layout issues. May be non-empty on success. |
+| `HasFontWarnings` | `true` if any diagnostic has `Category == Font`. |
+| `ThrowIfFailed()` | Throws `SlimLOException` on failure, returns `this` on success. |
+| `implicit operator bool` | Enables `if (result)` pattern. |
+
+**`ConversionResult<T>`** — Also carries `Data` (e.g., `byte[]` for buffer conversions).
+
+**`ConversionOptions`** (record) — Per-conversion settings.
+
+| Property | Default | Description |
+|----------|---------|-------------|
+| `PdfVersion` | `Default` (1.7) | `PdfA1`, `PdfA2`, `PdfA3` for archival. |
+| `JpegQuality` | 0 (= 90) | JPEG compression quality 1–100. |
+| `Dpi` | 0 (= 300) | Maximum image resolution. |
+| `TaggedPdf` | `false` | Generate tagged PDF for accessibility. |
+| `PageRange` | `null` (all) | Page range string, e.g., `"1-5"` or `"1,3,5-7"`. |
+| `Password` | `null` | Password for protected documents. |
+
+**`PdfConverterOptions`** — Converter-level configuration.
+
+| Property | Default | Description |
+|----------|---------|-------------|
+| `ResourcePath` | auto-detect | Path to SlimLO resources (containing `program/`). |
+| `FontDirectories` | `null` | Extra font directories (set via `SAL_FONTPATH`). |
+| `MaxWorkers` | 1 | Number of parallel worker processes. |
+| `MaxConversionsPerWorker` | 0 (no limit) | Recycle worker after N conversions. |
+| `ConversionTimeout` | 5 min | Per-conversion timeout. Worker killed on timeout. |
+| `WarmUp` | `false` | Pre-start all workers during `Create()`. |
+
+**`ConversionDiagnostic`** — A single diagnostic entry.
+
+| Property | Description |
+|----------|-------------|
+| `Severity` | `Info` or `Warning` |
+| `Category` | `General`, `Font`, or `Layout` |
+| `Message` | Human-readable message |
+| `FontName` | Font name (if font-related) |
+| `SubstitutedWith` | Substitute font name (if substitution occurred) |
+
+### Environment variables
+
+| Variable | Description |
+|----------|-------------|
+| `SLIMLO_RESOURCE_PATH` | SlimLO resource directory (fallback for auto-detection). |
+| `SLIMLO_WORKER_PATH` | Path to `slimlo_worker` executable (fallback for auto-detection). |
+
+### Running .NET tests
+
+```bash
+cd dotnet
+
+# Unit tests only (no native dependencies needed)
+dotnet test
+
+# Full integration tests (requires native artifacts)
+SLIMLO_RESOURCE_PATH=../output-macos \
+SLIMLO_WORKER_PATH=../slimlo-api/build/slimlo_worker \
+dotnet test
+
+# With code coverage
+SLIMLO_RESOURCE_PATH=../output-macos \
+SLIMLO_WORKER_PATH=../slimlo-api/build/slimlo_worker \
+dotnet test --collect:"XPlat Code Coverage"
+```
+
+**Test suite:** 107 tests (unit + integration), covering:
+- All public types (`ConversionResult`, `ConversionDiagnostic`, `ConversionOptions`, enums, exceptions)
+- IPC protocol (message framing, serialization, edge cases)
+- Diagnostic parsing (all severity/category combinations, malformed input)
+- End-to-end conversion with 5 complex DOCX fixtures (multi-font, Unicode, rich formatting, large documents, missing fonts)
+- Concurrent conversions, dispose behavior, error handling
 
 ## Build pipeline
 
@@ -273,6 +426,7 @@ makefiles  →  $(if $(ENABLE_SLIMLO),,target)  to exclude targets
 | 008 | Adds `--export-dynamic` to `libmergedlo.so` to preserve UNO constructor symbols (Linux only; macOS ld64 exports default-visibility symbols automatically) |
 | 009 | *(post-autogen)* Restricts LTO to merged lib only, preventing link failures in non-merged libs. Uses `-flto=thin` on macOS (Clang), `-flto=auto` on Linux (GCC). |
 | 010 | Enables ICU data filtering for minimal locale data (en-US only). Patches ICU build to use `ICU_DATA_FILTER_FILE` instead of pre-built 30 MB data archive. |
+| 011 | Makes `SfxApplication::GetOrCreate()` and `#include <sfx2/app.hxx>` unconditional in LOKit init. Required on macOS where LOKit needs SfxApplication after `InitVCL()`. |
 
 ## Cross-platform details
 
@@ -358,6 +512,8 @@ Full LibreOffice `instdir/` is **~1.5 GB**. SlimLO reduces it in three stages:
 |---|---|
 | LO version | `libreoffice-25.8.5.1` |
 | Test result | `test.docx` (1,754 B) → valid PDF (26 KB) |
+| .NET SDK | 107 tests passing (unit + integration) |
+| .NET coverage | 80.5% line (100% on public API types) |
 
 ## Roadmap
 
@@ -381,10 +537,21 @@ Full LibreOffice `instdir/` is **~1.5 GB**. SlimLO reduces it in three stages:
 - [ ] Multi-arch Docker image publishing
 - [ ] NuGet package generation and publishing
 
+### .NET SDK
+
+- [x] Process-isolated worker architecture (crash resilience)
+- [x] Thread-safe concurrent conversions via WorkerPool
+- [x] Font diagnostics (ConversionDiagnostic with severity/category)
+- [x] Async API with ConversionResult pattern (no exceptions for conversion failures)
+- [x] Buffer and file conversion overloads
+- [x] PDF/A, tagged PDF, page range, password options
+- [x] 107 unit + integration tests
+- [ ] NuGet package generation and publishing
+
 ### Quality
 
 - [ ] Custom seccomp profile (allow only `clone3`, instead of `seccomp=unconfined`)
-- [ ] End-to-end .NET tests inside Docker
+- [x] End-to-end .NET tests with complex DOCX fixtures
 - [ ] Benchmark: conversion performance and memory usage
 
 ## Project structure
@@ -401,10 +568,11 @@ Full LibreOffice `instdir/` is **~1.5 GB**. SlimLO reduces it in three stages:
 ├── .github/workflows/
 │   ├── build-macos.yml                 # GitHub Actions: macOS arm64 build
 │   └── build-windows.yml               # GitHub Actions: Windows x64 build
-├── patches/                            # 10 idempotent .sh scripts (not .patch files)
+├── patches/                            # 11 idempotent .sh scripts (not .patch files)
 │   ├── 001..008-*.sh                   # Pre-autogen patches
 │   ├── 009-*.postautogen               # Post-autogen patch (LTO flags)
-│   └── 010-icu-data-filter.sh          # ICU locale filtering
+│   ├── 010-icu-data-filter.sh          # ICU locale filtering
+│   └── 011-sfxapplication-getorcreate.sh  # macOS LOKit init fix
 ├── scripts/
 │   ├── build.sh                        # Cross-platform build pipeline
 │   ├── apply-patches.sh                # Runs all patches in order
@@ -413,20 +581,37 @@ Full LibreOffice `instdir/` is **~1.5 GB**. SlimLO reduces it in three stages:
 │   ├── pack-nuget.sh                   # NuGet packaging
 │   ├── bump-lo-version.sh              # Update pinned LO version
 │   └── test-patches.sh                 # Patch validation
-├── slimlo-api/                         # C API wrapper
-│   ├── CMakeLists.txt                  # Cross-platform CMake (so/dylib/dll)
-│   ├── include/slimlo.h                # Public header
+├── slimlo-api/                         # C API + worker process
+│   ├── CMakeLists.txt                  # Cross-platform CMake (so/dylib/dll + worker)
+│   ├── include/slimlo.h                # Public C header
 │   └── src/
-│       ├── slimlo.cxx                  # LOKit-based implementation
-│       └── lokit_macos_shim.h          # macOS LOKit #error bypass
+│       ├── slimlo.cxx                  # LOKit-based C API implementation
+│       ├── slimlo_worker.c             # IPC worker process (stdin/stdout JSON)
+│       ├── lokit_macos_shim.h          # macOS LOKit #error bypass
+│       └── cjson/                      # Vendored cJSON (MIT license)
 ├── dotnet/
-│   ├── SlimLO/                         # .NET 8 managed wrapper (PdfConverter)
+│   ├── SlimLO/                         # .NET 8 SDK (enterprise-grade)
+│   │   ├── PdfConverter.cs             # Public API (IAsyncDisposable)
+│   │   ├── PdfConverterOptions.cs      # Converter-level configuration
+│   │   ├── ConversionOptions.cs        # Per-conversion settings (record)
+│   │   ├── ConversionResult.cs         # Result with diagnostics
+│   │   ├── ConversionDiagnostic.cs     # Font/layout diagnostic entry
+│   │   ├── Enums.cs                    # DocumentFormat, PdfVersion, SlimLOErrorCode, etc.
+│   │   ├── SlimLOException.cs          # Typed exception with error code
+│   │   └── Internal/                   # Process-isolated worker management
+│   │       ├── WorkerPool.cs           # Thread-safe pool with round-robin dispatch
+│   │       ├── WorkerProcess.cs        # Single worker lifecycle + IPC
+│   │       ├── Protocol.cs             # Length-prefixed JSON framing
+│   │       ├── StderrDiagnosticParser.cs  # Parse font/layout warnings
+│   │       └── WorkerLocator.cs        # Auto-detect worker + resource paths
 │   ├── SlimLO.Native/                  # Per-platform native NuGet package
-│   └── SlimLO.Tests/                   # xUnit tests
+│   └── SlimLO.Tests/                   # 107 xUnit tests (unit + integration)
 └── tests/
     ├── test.sh                         # Cross-platform integration test (native + Docker)
     ├── test_convert.c                  # C test program
-    └── test.docx                       # Test fixture (1,754 bytes)
+    ├── test.docx                       # Test fixture (1,754 bytes)
+    ├── generate_complex_docx.py        # Generate complex DOCX fixtures
+    └── fixtures/                       # Complex DOCX fixtures (multi-font, unicode, etc.)
 ```
 
 ## Runtime requirements

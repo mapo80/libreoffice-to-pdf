@@ -10,11 +10,16 @@
     <PackageId>SlimLO</PackageId>
     <Version>0.1.0</Version>
     <Authors>SlimLO Contributors</Authors>
-    <Description>Lightweight PDF conversion library for OOXML documents (docx, xlsx, pptx). Built on LibreOffice's rendering engine.</Description>
+    <Description>Enterprise-grade PDF conversion library for OOXML documents (docx, xlsx, pptx). Process-isolated, thread-safe, with font diagnostics. Built on LibreOffice's rendering engine.</Description>
     <PackageLicenseExpression>MPL-2.0</PackageLicenseExpression>
     <PackageTags>pdf;conversion;docx;xlsx;pptx;libreoffice</PackageTags>
     <RepositoryType>git</RepositoryType>
   </PropertyGroup>
+
+  <!-- Allow test project to access internal types -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="SlimLO.Tests" />
+  </ItemGroup>
 
   <!-- Ship MSBuild .targets to consumers so native assets get copied to output -->
   <ItemGroup>
