@@ -26,11 +26,17 @@ jobs:
         with:
           arch: x64
 
-      - name: Install Windows-native pkgconf for LO
+      - name: Install pkgconf for LO
         shell: msys2 {0}
         run: |
+          # LO needs a Windows-native pkgconf-2.4.3.exe
           pacman -S --noconfirm mingw-w64-x86_64-pkgconf
           cp /mingw64/bin/pkgconf.exe /usr/bin/pkgconf-2.4.3.exe
+          # Ensure MSYS pkgconf + pkg-config alias work for autoconf checks
+          pacman -S --noconfirm pkgconf
+          ls /usr/bin/pkg-config* 2>/dev/null || ln -s /usr/bin/pkgconf.exe /usr/bin/pkg-config.exe
+          echo "pkg-config version: $(pkg-config --version)"
+          echo "pkgconf-2.4.3 version: $(pkgconf-2.4.3 --version)"
 
       - run: choco install nasm -y
         shell: pwsh
