@@ -16,7 +16,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: egor-tensin/setup-cygwin@v4
+      - uses: cygwin/cygwin-install-action@v6
+        id: cygwin
         with:
           packages: >-
             autoconf automake bison flex gperf libtool make
@@ -32,12 +33,12 @@ jobs:
 
       - uses: actions/cache@v4
         with:
-          path: C:\cygwin\home\runneradmin\.ccache
+          path: ${{ steps.cygwin.outputs.root }}\home\runneradmin\.ccache
           key: ccache-win-x64-${{ hashFiles('LO_VERSION', 'distro-configs/SlimLO.conf') }}
           restore-keys: ccache-win-x64-
 
       - name: Build SlimLO
-        shell: C:\cygwin\bin\bash.exe --login -eo pipefail {0}
+        shell: ${{ steps.cygwin.outputs.root }}\bin\bash.exe --login -eo pipefail {0}
         env:
           CHERE_INVOKING: 1
           ICU_DATA_FILTER_FILE: /cygdrive/d/a/${{ github.event.repository.name }}/${{ github.event.repository.name }}/icu-filter.json
