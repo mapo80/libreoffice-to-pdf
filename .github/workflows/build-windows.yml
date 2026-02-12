@@ -31,7 +31,6 @@ jobs:
         run: |
           pacman -S --noconfirm mingw-w64-x86_64-pkgconf
           cp /mingw64/bin/pkgconf.exe /usr/bin/pkgconf-2.4.3.exe
-          cp /mingw64/bin/pkgconf.exe /usr/bin/pkg-config.exe
 
       - run: choco install nasm -y
         shell: pwsh
