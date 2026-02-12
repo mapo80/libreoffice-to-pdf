@@ -51,12 +51,15 @@ else
     # Replace the gb_LTOFLAGS assignment(s) with empty value
     # The original line(s) look like:
     #   gb_LTOFLAGS := $(if $(filter TRUE,$(ENABLE_LTO)),-flto=$(LTO_NPROC) ...)
-    # We replace with empty, preserving the original as a comment
-    sed -E '/^gb_LTOFLAGS\s*:=/s|^|# SlimLO: LTO disabled globally (applied only to merged lib)\n# |' \
-        "$GCC_MK" > "$GCC_MK.tmp" && mv "$GCC_MK.tmp" "$GCC_MK"
-    # Add the override after the commented line
-    sed '/# SlimLO: LTO disabled globally/a\
-gb_LTOFLAGS :=' "$GCC_MK" > "$GCC_MK.tmp" && mv "$GCC_MK.tmp" "$GCC_MK"
+    # We replace with empty, preserving the original as a comment.
+    # Use awk for portable newline insertion (BSD sed doesn't support \n in replacement).
+    awk '/^gb_LTOFLAGS[[:space:]]*:=/ && !done {
+        print "# SlimLO: LTO disabled globally (applied only to merged lib)"
+        print "# " $0
+        print "gb_LTOFLAGS :="
+        done=1
+        next
+    } {print}' "$GCC_MK" > "$GCC_MK.tmp" && mv "$GCC_MK.tmp" "$GCC_MK"
     echo "    Cleared gb_LTOFLAGS globally"
 fi
 
@@ -75,16 +78,20 @@ if grep -q 'gb_Library_add_cxxflags,merged.*-flto' "$MERGED_MK"; then
 else
     TAB="$(printf '\t')"
     TMPBLOCK=$(mktemp)
-    # Detect number of parallel LTO threads from nproc (or default to 4)
+    # GCC uses -flto=auto; clang uses -flto=thin (faster, lower memory)
+    case "$(uname -s)" in
+        Darwin) LTO_FLAG="-flto=thin" ;;
+        *)      LTO_FLAG="-flto=auto" ;;
+    esac
     cat > "$TMPBLOCK" << BLOCKEOF
 
 # SlimLO: explicit LTO for merged lib only
 \$(eval \$(call gb_Library_add_cxxflags,merged,\\
-${TAB}-flto=auto \\
+${TAB}${LTO_FLAG} \\
 ))
 
 \$(eval \$(call gb_Library_add_ldflags,merged,\\
-${TAB}-flto=auto \\
+${TAB}${LTO_FLAG} \\
 ))
 BLOCKEOF
     # Insert after gb_Library_Library,merged

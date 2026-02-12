@@ -49,9 +49,11 @@ if grep -q 'data/misc/icudata.rc' "$UNPACK_MK"; then
     # Use unzip -x to exclude build system files that LO patches target
     sed 's|unzip -q -d source -o $(gb_UnpackedTarget_TARFILE_LOCATION)/$(ICU_DATA_TARBALL) data/misc/icudata.rc|unzip -q -d source -o $(gb_UnpackedTarget_TARFILE_LOCATION)/$(ICU_DATA_TARBALL) -x data/Makefile.in data/pkgdataMakefile.in data/makedata.mak data/build.xml data/BUILDRULES.py \&\& rm -f source/data/in/*.dat|' \
         "$UNPACK_MK" > "$UNPACK_MK.tmp" && mv "$UNPACK_MK.tmp" "$UNPACK_MK"
-    # Add the SlimLO marker comment
-    sed '/gb_UnpackedTarball_set_pre_action,icu/i\# SlimLO: ICU data filter - extract data sources, exclude build files, remove pre-built .dat' \
-        "$UNPACK_MK" > "$UNPACK_MK.tmp" && mv "$UNPACK_MK.tmp" "$UNPACK_MK"
+    # Add the SlimLO marker comment (using sed with temp file for macOS compat)
+    sed '/gb_UnpackedTarball_set_pre_action,icu/{
+i\
+# SlimLO: ICU data filter - extract data sources, exclude build files, remove pre-built .dat
+}' "$UNPACK_MK" > "$UNPACK_MK.tmp" && mv "$UNPACK_MK.tmp" "$UNPACK_MK"
     echo "    Changed unzip to extract data sources (excluding build files) + remove pre-built .dat"
 else
     echo "    WARNING: Could not find 'data/misc/icudata.rc' extraction line"

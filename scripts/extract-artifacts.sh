@@ -18,7 +18,25 @@ fi
 
 echo "Extracting artifacts from $INSTDIR to $OUTPUT_DIR..."
 
-# Clean output directory
+# Platform-specific folder names (macOS .app bundle uses different layout)
+case "$(uname -s)" in
+    Darwin)
+        LIB_FOLDER="Frameworks"
+        ETC_FOLDER="Resources"
+        SHARE_FOLDER="Resources"
+        PRESETS_FOLDER="Resources/presets"
+        LIB_EXT="dylib"
+        ;;
+    *)
+        LIB_FOLDER="program"
+        ETC_FOLDER="program"
+        SHARE_FOLDER="share"
+        PRESETS_FOLDER="presets"
+        LIB_EXT="so"
+        ;;
+esac
+
+# Clean output directory — always use program/ and share/ in output for consistency
 rm -rf "$OUTPUT_DIR"
 mkdir -p "$OUTPUT_DIR"/program
 
@@ -28,21 +46,21 @@ mkdir -p "$OUTPUT_DIR"/program
 #    Copying all .so/.dylib is safer than cherry-picking.
 # -----------------------------------------------------------
 echo "  Copying libraries..."
-find "$INSTDIR/program" \( -name "*.so" -o -name "*.so.*" -o -name "*.dylib" \) \
+find "$INSTDIR/$LIB_FOLDER" \( -name "*.so" -o -name "*.so.*" -o -name "*.dylib" -o -name "*.dylib.*" -o -name "*.dll" \) \
     -exec cp -a {} "$OUTPUT_DIR/program/" \;
 
 # -----------------------------------------------------------
 # 2. UNO type and service registries (required for component loading)
 # -----------------------------------------------------------
 echo "  Copying UNO registries..."
-cp -a "$INSTDIR"/program/types.rdb "$OUTPUT_DIR/program/" 2>/dev/null || true
-cp -a "$INSTDIR"/program/services.rdb "$OUTPUT_DIR/program/" 2>/dev/null || true
+cp -a "$INSTDIR/$ETC_FOLDER"/types.rdb "$OUTPUT_DIR/program/" 2>/dev/null || true
+cp -a "$INSTDIR/$ETC_FOLDER"/services.rdb "$OUTPUT_DIR/program/" 2>/dev/null || true
 # Some builds use subdirectories for split registries
-if [ -d "$INSTDIR/program/types" ]; then
-    cp -a "$INSTDIR/program/types" "$OUTPUT_DIR/program/"
+if [ -d "$INSTDIR/$ETC_FOLDER/types" ]; then
+    cp -a "$INSTDIR/$ETC_FOLDER/types" "$OUTPUT_DIR/program/"
 fi
-if [ -d "$INSTDIR/program/services" ]; then
-    cp -a "$INSTDIR/program/services" "$OUTPUT_DIR/program/"
+if [ -d "$INSTDIR/$ETC_FOLDER/services" ]; then
+    cp -a "$INSTDIR/$ETC_FOLDER/services" "$OUTPUT_DIR/program/"
 fi
 
 # -----------------------------------------------------------
@@ -51,24 +69,25 @@ fi
 echo "  Copying bootstrap configuration..."
 for rc in sofficerc soffice.ini fundamentalrc fundamental.ini versionrc version.ini \
           bootstraprc bootstrap.ini unorc uno.ini lounorc loaborc saborc; do
-    cp -a "$INSTDIR/program/$rc" "$OUTPUT_DIR/program/" 2>/dev/null || true
+    cp -a "$INSTDIR/$ETC_FOLDER/$rc" "$OUTPUT_DIR/program/" 2>/dev/null || true
 done
 
 # -----------------------------------------------------------
 # 4. Configuration (XCD files — required for UNO bootstrap)
 # -----------------------------------------------------------
 echo "  Copying XCD configuration..."
-if [ -d "$INSTDIR/share/registry" ]; then
+if [ -d "$INSTDIR/$SHARE_FOLDER/registry" ]; then
     mkdir -p "$OUTPUT_DIR/share/registry"
-    cp -a "$INSTDIR"/share/registry/*.xcd "$OUTPUT_DIR/share/registry/" 2>/dev/null || true
+    cp -a "$INSTDIR/$SHARE_FOLDER"/registry/*.xcd "$OUTPUT_DIR/share/registry/" 2>/dev/null || true
 fi
 
 # -----------------------------------------------------------
 # 5. Filter definitions (required for format detection/export)
 # -----------------------------------------------------------
 echo "  Copying filter definitions..."
-if [ -d "$INSTDIR/share/filter" ]; then
-    cp -a "$INSTDIR/share/filter" "$OUTPUT_DIR/share/"
+if [ -d "$INSTDIR/$SHARE_FOLDER/filter" ]; then
+    mkdir -p "$OUTPUT_DIR/share"
+    cp -a "$INSTDIR/$SHARE_FOLDER/filter" "$OUTPUT_DIR/share/"
 fi
 
 # -----------------------------------------------------------
@@ -76,8 +95,9 @@ fi
 # -----------------------------------------------------------
 echo "  Copying share data..."
 # Config directory — copy all, then prune non-essential soffice.cfg modules
-if [ -d "$INSTDIR/share/config" ]; then
-    cp -a "$INSTDIR/share/config" "$OUTPUT_DIR/share/"
+if [ -d "$INSTDIR/$SHARE_FOLDER/config" ]; then
+    mkdir -p "$OUTPUT_DIR/share"
+    cp -a "$INSTDIR/$SHARE_FOLDER/config" "$OUTPUT_DIR/share/"
     # Remove soffice.cfg modules not needed for DOCX→PDF (saves ~25 MB)
     for mod in scalc simpress sdraw schart smath sglobal BasicIDE \
                swxform swform swreport sweb sabpilot scanner StartModule; do
@@ -96,22 +116,41 @@ if [ -d "$INSTDIR/share/config" ]; then
     rm -rf "$OUTPUT_DIR/share/config/soffice.cfg/modules/swriter/statusbar"
 fi
 # Color palettes
-if [ -d "$INSTDIR/share/palette" ]; then
-    cp -a "$INSTDIR/share/palette" "$OUTPUT_DIR/share/"
+if [ -d "$INSTDIR/$SHARE_FOLDER/palette" ]; then
+    cp -a "$INSTDIR/$SHARE_FOLDER/palette" "$OUTPUT_DIR/share/"
 fi
 # Fonts (only present if --without-fonts was NOT used)
-if [ -d "$INSTDIR/share/fonts" ]; then
-    cp -a "$INSTDIR/share/fonts" "$OUTPUT_DIR/share/"
+if [ -d "$INSTDIR/$SHARE_FOLDER/fonts" ]; then
+    cp -a "$INSTDIR/$SHARE_FOLDER/fonts" "$OUTPUT_DIR/share/"
 fi
 # Presets directory (required for user profile initialization)
 # LOKit's userinstall::create() copies BRAND_BASE_DIR/presets to user profile.
-# LIBO_SHARE_PRESETS_FOLDER="presets" is relative to install root, NOT share/.
+# On Linux: LIBO_SHARE_PRESETS_FOLDER="presets" relative to install root.
+# On macOS: LIBO_SHARE_PRESETS_FOLDER="Resources/presets" relative to Contents/.
 # An empty directory satisfies the check; missing directory causes fatal error.
-if [ -d "$INSTDIR/presets" ]; then
-    cp -a "$INSTDIR/presets" "$OUTPUT_DIR/"
+if [ -d "$INSTDIR/$PRESETS_FOLDER" ]; then
+    mkdir -p "$OUTPUT_DIR/presets"
+    cp -a "$INSTDIR/$PRESETS_FOLDER"/* "$OUTPUT_DIR/presets/" 2>/dev/null || true
 else
     mkdir -p "$OUTPUT_DIR/presets"
 fi
+
+# -----------------------------------------------------------
+# 6b. macOS: Create .app-compatible directory symlinks
+#     LOKit on macOS hardcodes: aAppProgramURL + "/../Resources/" for sofficerc,
+#     and fundamentalrc uses BRAND_BASE_DIR/Resources/ and BRAND_BASE_DIR/Frameworks/.
+#     Our flat output has everything in program/ and share/.
+#     Create symlinks so LOKit finds files where it expects them.
+# -----------------------------------------------------------
+case "$(uname -s)" in
+    Darwin)
+        echo "  Creating macOS .app-compatible symlinks..."
+        # LOKit looks for ../Resources/ relative to the program directory passed to lok_init
+        ln -sfn program "$OUTPUT_DIR/Resources"
+        # fundamentalrc references BRAND_BASE_DIR/Frameworks/ for LO_LIB_DIR
+        ln -sfn program "$OUTPUT_DIR/Frameworks"
+        ;;
+esac
 
 # -----------------------------------------------------------
 # 7. Remove executables we don't need
@@ -152,6 +191,7 @@ for lib in \
 ; do
     rm -f "$OUTPUT_DIR/program/${lib}.so"
     rm -f "$OUTPUT_DIR/program/${lib}.dylib"
+    rm -f "$OUTPUT_DIR/program/${lib}.dll"
 done
 
 # -----------------------------------------------------------
@@ -160,17 +200,17 @@ done
 # -----------------------------------------------------------
 echo "  Removing non-essential external import libraries..."
 for extlib in \
-    "libmwaw-0.3-lo.so*" "libmwaw-0.3-lo.dylib" \
-    "libetonyek-0.1-lo.so*" "libetonyek-0.1-lo.dylib" \
-    "libstaroffice-0.0-lo.so*" "libstaroffice-0.0-lo.dylib" \
-    "libwps-0.4-lo.so*" "libwps-0.4-lo.dylib" \
-    "liborcus-0.20.so*" "liborcus-0.20.dylib" \
-    "liborcus-parser-0.20.so*" "liborcus-parser-0.20.dylib" \
-    "libodfgen-0.1-lo.so*" "libodfgen-0.1-lo.dylib" \
-    "libwpd-0.10-lo.so*" "libwpd-0.10-lo.dylib" \
-    "libwpg-0.3-lo.so*" "libwpg-0.3-lo.dylib" \
-    "librevenge-0.0-lo.so*" "librevenge-0.0-lo.dylib" \
-    "libexslt.so*" "libexslt.dylib" \
+    "libmwaw-0.3*" "mwaw-0.3-lo.dll" \
+    "libetonyek-0.1*" "etonyek-0.1-lo.dll" \
+    "libstaroffice-0.0*" "staroffice-0.0-lo.dll" \
+    "libwps-0.4*" "wps-0.4-lo.dll" \
+    "liborcus-0.20*" "orcus-0.20.dll" \
+    "liborcus-parser-0.20*" "orcus-parser-0.20.dll" \
+    "libodfgen-0.1*" "odfgen-0.1-lo.dll" \
+    "libwpd-0.10*" "wpd-0.10-lo.dll" \
+    "libwpg-0.3*" "wpg-0.3-lo.dll" \
+    "librevenge-0.0*" "revenge-0.0-lo.dll" \
+    "libexslt.*" "exslt.dll" \
 ; do
     rm -f "$OUTPUT_DIR/program/"$extlib
 done
@@ -207,31 +247,30 @@ rm -f "$OUTPUT_DIR/share/registry/lingucomponent.xcd"
 #     NOTE: librdf/libraptor2/librasqal CANNOT be removed — called at runtime.
 # -----------------------------------------------------------
 echo "  Removing unused NEEDED libraries..."
-if [ "$(uname -s)" = "Darwin" ]; then
-    MERGEDSO_PRE="$OUTPUT_DIR/program/libmergedlo.dylib"
-    if [ -f "$MERGEDSO_PRE" ]; then
-        for needlib in libcurl.4.dylib; do
-            if otool -L "$MERGEDSO_PRE" 2>/dev/null | grep -q "$needlib"; then
-                install_name_tool -change "@rpath/$needlib" "" "$MERGEDSO_PRE" 2>/dev/null || true
-                rm -f "$OUTPUT_DIR/program/$needlib"
-                echo "    Removed dependency + file: $needlib"
-            fi
-        done
-    fi
-else
-    MERGEDSO_PRE="$OUTPUT_DIR/program/libmergedlo.so"
-    if command -v patchelf &>/dev/null && [ -f "$MERGEDSO_PRE" ]; then
-        for needlib in libcurl.so.4; do
-            if readelf -d "$MERGEDSO_PRE" 2>/dev/null | grep -q "$needlib"; then
-                patchelf --remove-needed "$needlib" "$MERGEDSO_PRE"
-                rm -f "$OUTPUT_DIR/program/$needlib"
-                echo "    Removed NEEDED + file: $needlib"
-            fi
-        done
-    else
-        echo "    patchelf not available — skipping NEEDED removal"
-    fi
-fi
+case "$(uname -s)" in
+    CYGWIN*|MINGW*|MSYS*)
+        echo "    Windows: skipping NEEDED removal (not applicable to PE format)"
+        ;;
+    Darwin)
+        # macOS: install_name_tool cannot remove NEEDED deps (no --remove-needed equivalent).
+        # Keep libcurl.4.dylib — it's small and harmless.
+        echo "    macOS: skipping NEEDED removal (install_name_tool cannot remove deps)"
+        ;;
+    *)
+        MERGEDSO_PRE="$OUTPUT_DIR/program/libmergedlo.so"
+        if command -v patchelf &>/dev/null && [ -f "$MERGEDSO_PRE" ]; then
+            for needlib in libcurl.so.4; do
+                if readelf -d "$MERGEDSO_PRE" 2>/dev/null | grep -q "$needlib"; then
+                    patchelf --remove-needed "$needlib" "$MERGEDSO_PRE"
+                    rm -f "$OUTPUT_DIR/program/$needlib"
+                    echo "    Removed NEEDED + file: $needlib"
+                fi
+            done
+        else
+            echo "    patchelf not available — skipping NEEDED removal"
+        fi
+        ;;
+esac
 
 # -----------------------------------------------------------
 # 8. Strip binaries to reduce size
@@ -240,39 +279,89 @@ echo "  Stripping binaries..."
 find "$OUTPUT_DIR/program" -name "*.so" -exec strip --strip-unneeded {} \; 2>/dev/null || true
 find "$OUTPUT_DIR/program" -name "*.so.*" -exec strip --strip-unneeded {} \; 2>/dev/null || true
 find "$OUTPUT_DIR/program" -name "*.dylib" -exec strip -x {} \; 2>/dev/null || true
+find "$OUTPUT_DIR/program" -name "*.dylib.*" -exec strip -x {} \; 2>/dev/null || true
+find "$OUTPUT_DIR/program" -name "*.dll" -exec strip --strip-unneeded {} \; 2>/dev/null || true
+
+# -----------------------------------------------------------
+# 8b. Clean services.rdb — remove component entries for libraries
+#     we don't ship. On macOS, some libraries are NOT merged into
+#     libmergedlo.dylib, and the UNO service manager crashes when
+#     trying to instantiate services from missing libraries (e.g.,
+#     libLanguageToollo.dylib grammar checker causes null ptr crash
+#     in LngSvcMgr::GetAvailableGrammarSvcs_Impl).
+# -----------------------------------------------------------
+echo "  Cleaning services.rdb (removing entries for missing libraries)..."
+SERVICES_RDB="$OUTPUT_DIR/program/services/services.rdb"
+if [ -f "$SERVICES_RDB" ] && command -v python3 &>/dev/null; then
+    python3 -c "
+import xml.etree.ElementTree as ET
+import os, sys
+
+ET.register_namespace('', 'http://openoffice.org/2010/uno-components')
+tree = ET.parse('$SERVICES_RDB')
+root = tree.getroot()
+ns = {'ns': 'http://openoffice.org/2010/uno-components'}
+prog = '$OUTPUT_DIR/program'
+removed = 0
+for comp in list(root.findall('ns:component', ns)):
+    uri = comp.get('uri', '')
+    lib = uri.split('/')[-1]
+    if lib and not os.path.exists(os.path.join(prog, lib)):
+        root.remove(comp)
+        removed += 1
+print(f'    Removed {removed} component entries for missing libraries', file=sys.stderr)
+tree.write('$SERVICES_RDB', xml_declaration=True, encoding='unicode')
+" 2>&1
+else
+    echo "    Skipping (services.rdb not found or python3 not available)"
+fi
 
 # -----------------------------------------------------------
 # 9. Verify constructor symbols survived stripping
 # -----------------------------------------------------------
 echo "  Verifying constructor symbol visibility..."
-if [ "$(uname -s)" = "Darwin" ]; then
-    MERGEDSO="$OUTPUT_DIR/program/libmergedlo.dylib"
-    if [ -f "$MERGEDSO" ]; then
-        CTOR_COUNT=$(nm -g "$MERGEDSO" 2>/dev/null | grep -c "get_implementation" || echo "0")
-        echo "  Constructor symbols: $CTOR_COUNT"
-        if [ "$CTOR_COUNT" -eq 0 ] 2>/dev/null; then
-            echo "  WARNING: No constructor symbols found in libmergedlo.dylib!"
-            echo "  UNO component loading will likely fail at runtime."
+case "$(uname -s)" in
+    CYGWIN*|MINGW*|MSYS*)
+        MERGEDSO="$OUTPUT_DIR/program/mergedlo.dll"
+        if [ -f "$MERGEDSO" ]; then
+            CTOR_COUNT=$(dumpbin.exe /exports "$MERGEDSO" 2>/dev/null | grep -c "get_implementation" || echo "0")
+            echo "  Constructor symbols (exports): $CTOR_COUNT"
+            if [ "$CTOR_COUNT" -eq 0 ] 2>/dev/null; then
+                echo "  WARNING: No constructor symbols found in mergedlo.dll!"
+                echo "  UNO component loading will likely fail at runtime."
+            fi
         fi
-    fi
-else
-    MERGEDSO="$OUTPUT_DIR/program/libmergedlo.so"
-    if [ -f "$MERGEDSO" ]; then
-        CTOR_COUNT=$(readelf --dyn-syms -W "$MERGEDSO" 2>/dev/null | grep -c "get_implementation" || echo "0")
-        echo "  Constructor symbols in .dynsym: $CTOR_COUNT"
-        if [ "$CTOR_COUNT" -eq 0 ] 2>/dev/null; then
-            echo "  WARNING: No constructor symbols found in libmergedlo.so .dynsym!"
-            echo "  UNO component loading will likely fail at runtime."
+        ;;
+    Darwin)
+        MERGEDSO="$OUTPUT_DIR/program/libmergedlo.dylib"
+        if [ -f "$MERGEDSO" ]; then
+            CTOR_COUNT=$(nm -g "$MERGEDSO" 2>/dev/null | grep -c "get_implementation" || echo "0")
+            echo "  Constructor symbols: $CTOR_COUNT"
+            if [ "$CTOR_COUNT" -eq 0 ] 2>/dev/null; then
+                echo "  WARNING: No constructor symbols found in libmergedlo.dylib!"
+                echo "  UNO component loading will likely fail at runtime."
+            fi
         fi
-    fi
-fi
+        ;;
+    *)
+        MERGEDSO="$OUTPUT_DIR/program/libmergedlo.so"
+        if [ -f "$MERGEDSO" ]; then
+            CTOR_COUNT=$(readelf --dyn-syms -W "$MERGEDSO" 2>/dev/null | grep -c "get_implementation" || echo "0")
+            echo "  Constructor symbols in .dynsym: $CTOR_COUNT"
+            if [ "$CTOR_COUNT" -eq 0 ] 2>/dev/null; then
+                echo "  WARNING: No constructor symbols found in libmergedlo.so .dynsym!"
+                echo "  UNO component loading will likely fail at runtime."
+            fi
+        fi
+        ;;
+esac
 
 # -----------------------------------------------------------
 # Report
 # -----------------------------------------------------------
 echo ""
 echo "=== Artifact Summary ==="
-LIB_COUNT=$(find "$OUTPUT_DIR/program" \( -name "*.so" -o -name "*.so.*" -o -name "*.dylib" \) | wc -l)
+LIB_COUNT=$(find "$OUTPUT_DIR/program" \( -name "*.so" -o -name "*.so.*" -o -name "*.dylib" -o -name "*.dylib.*" -o -name "*.dll" \) | wc -l)
 echo "Libraries: $LIB_COUNT"
 echo ""
 echo "Total size:"

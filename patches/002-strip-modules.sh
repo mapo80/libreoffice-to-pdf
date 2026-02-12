@@ -66,7 +66,8 @@ MODULES_TO_STRIP=(
 
     # Platform-specific (leaf)
     "embedserv"
-    "apple_remote"
+    # NOTE: apple_remote is needed on macOS (vclplug_osx links against AppleRemote).
+    # Only strip on non-macOS platforms.
     "android"
     "cli_ure"
 )
