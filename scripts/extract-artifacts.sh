@@ -62,6 +62,16 @@ fi
 if [ -d "$INSTDIR/$ETC_FOLDER/services" ]; then
     cp -a "$INSTDIR/$ETC_FOLDER/services" "$OUTPUT_DIR/program/"
 fi
+# macOS: URE base registries are in Resources/ure/share/misc/
+case "$(uname -s)" in
+    Darwin)
+        if [ -d "$INSTDIR/Resources/ure/share/misc" ]; then
+            echo "    Copying URE base registries..."
+            cp -a "$INSTDIR/Resources/ure/share/misc/types.rdb" "$OUTPUT_DIR/program/" 2>/dev/null || true
+            cp -a "$INSTDIR/Resources/ure/share/misc/services.rdb" "$OUTPUT_DIR/program/" 2>/dev/null || true
+        fi
+        ;;
+esac
 
 # -----------------------------------------------------------
 # 3. Bootstrap RC files (required for LOKit initialization)
@@ -71,6 +81,25 @@ for rc in sofficerc soffice.ini fundamentalrc fundamental.ini versionrc version.
           bootstraprc bootstrap.ini unorc uno.ini lounorc loaborc saborc; do
     cp -a "$INSTDIR/$ETC_FOLDER/$rc" "$OUTPUT_DIR/program/" 2>/dev/null || true
 done
+# macOS: unorc lives in Resources/ure/etc/unorc — copy and adapt paths for flat layout
+case "$(uname -s)" in
+    Darwin)
+        MACOS_UNORC="$INSTDIR/Resources/ure/etc/unorc"
+        if [ -f "$MACOS_UNORC" ] && [ ! -f "$OUTPUT_DIR/program/unorc" ]; then
+            echo "    Creating flat-layout unorc for macOS..."
+            # Original uses ${ORIGIN} = ure/etc/, paths like ${ORIGIN}/../../../Frameworks
+            # Our flat layout has everything in program/, so rewrite paths
+            cat > "$OUTPUT_DIR/program/unorc" << 'UNORC_EOF'
+[Bootstrap]
+URE_INTERNAL_LIB_DIR=${ORIGIN}
+URE_INTERNAL_JAVA_DIR=${ORIGIN}/../Resources/java
+URE_INTERNAL_JAVA_CLASSPATH=${URE_MORE_JAVA_TYPES}
+UNO_TYPES=${ORIGIN}/types.rdb ${URE_MORE_TYPES}
+UNO_SERVICES=${ORIGIN}/services.rdb ${URE_MORE_SERVICES}
+UNORC_EOF
+        fi
+        ;;
+esac
 
 # -----------------------------------------------------------
 # 4. Configuration (XCD files — required for UNO bootstrap)
@@ -149,6 +178,14 @@ case "$(uname -s)" in
         ln -sfn program "$OUTPUT_DIR/Resources"
         # fundamentalrc references BRAND_BASE_DIR/Frameworks/ for LO_LIB_DIR
         ln -sfn program "$OUTPUT_DIR/Frameworks"
+        # fundamentalrc uses BRAND_BASE_DIR/Resources/registry, BRAND_BASE_DIR/Resources/config etc.
+        # Since Resources → program, these resolve to program/registry, program/config etc.
+        # But our data is in share/. Create symlinks inside program/ to share/ subdirs.
+        for subdir in registry filter config palette fonts; do
+            if [ -d "$OUTPUT_DIR/share/$subdir" ]; then
+                ln -sfn "../share/$subdir" "$OUTPUT_DIR/program/$subdir"
+            fi
+        done
         ;;
 esac
 
