@@ -19,6 +19,7 @@ jobs:
       - uses: cygwin/cygwin-install-action@v6
         with:
           install-dir: C:\cygwin
+          site: https://mirrors.kernel.org/sourceware/cygwin/
           packages: >-
             autoconf automake bison flex gperf libtool make
             patch pkg-config zip unzip wget perl python3
