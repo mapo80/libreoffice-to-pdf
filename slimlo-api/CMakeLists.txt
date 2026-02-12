@@ -27,9 +27,12 @@ target_include_directories(slimlo
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
     PRIVATE
-        # LibreOfficeKit headers
+        # LibreOfficeKit headers — path varies by platform:
+        # Linux:  instdir/../include
+        # macOS:  instdir/LibreOffice.app/Contents/../../.. → lo-src/include
         ${INSTDIR}/../include
-        # Fallback: headers in the source tree
+        ${INSTDIR}/../../../include
+        # Fallback: SDK headers
         ${INSTDIR}/sdk/include
 )
 
@@ -39,18 +42,33 @@ target_compile_definitions(slimlo PRIVATE
     LO_VERSION_STR="${LO_VERSION_STR}"
 )
 
+# On macOS, LibreOfficeKitInit.h has #error "not supported on macOS".
+# LOKit works fine via dlopen — the #error is an upstream policy check.
+# We bypass it by force-including a shim header that redefines the macros.
+if(APPLE)
+    target_compile_options(slimlo PRIVATE
+        -include "${CMAKE_CURRENT_SOURCE_DIR}/src/lokit_macos_shim.h"
+    )
+endif()
+
 # Link against LibreOfficeKit
 # The merged library contains most of LO
+if(APPLE)
+    set(LO_LIB_DIR "${INSTDIR}/Frameworks")
+else()
+    set(LO_LIB_DIR "${INSTDIR}/program")
+endif()
+
 find_library(MERGEDLO_LIB
     NAMES mergedlo
-    PATHS ${INSTDIR}/program
+    PATHS ${LO_LIB_DIR}
     NO_DEFAULT_PATH
 )
 
 if(MERGEDLO_LIB)
     target_link_libraries(slimlo PRIVATE ${MERGEDLO_LIB})
 else()
-    message(WARNING "libmergedlo not found in ${INSTDIR}/program. "
+    message(WARNING "libmergedlo not found in ${LO_LIB_DIR}. "
                     "SlimLO will rely on runtime dlopen via LOKit.")
 endif()
 
@@ -62,7 +80,7 @@ endif()
 # RPATH and SOVERSION (Unix only — Windows uses PATH / side-by-side)
 if(NOT WIN32)
     set_target_properties(slimlo PROPERTIES
-        BUILD_RPATH "${INSTDIR}/program"
+        BUILD_RPATH "${LO_LIB_DIR}"
         VERSION ${PROJECT_VERSION}
         SOVERSION 0
     )

@@ -23,6 +23,7 @@
   #define unlink _unlink
 #else
   #include <unistd.h>
+  #include <sys/stat.h>
 #endif
 
 // LibreOfficeKit C++ header (thin wrapper over the C API)
@@ -180,8 +181,24 @@ SLIMLO_API SlimLOHandle slimlo_init(const char* resource_path) {
     }
 
     // Initialize LibreOfficeKit
-    // lok_cpp_init expects the path to the LO program/ directory
-    std::string program_path = std::string(resource_path) + "/program";
+    // lok_cpp_init expects the path to the directory containing libmergedlo.
+    // This differs by platform/layout:
+    //   Linux flat:    resource_path/program/
+    //   macOS flat:    resource_path/program/
+    //   macOS .app:    resource_path/Frameworks/
+    std::string base(resource_path);
+    std::string program_path = base + "/program";
+
+    // On macOS, check if Frameworks/ exists (indicates .app bundle layout)
+#ifdef __APPLE__
+    {
+        struct stat st;
+        std::string fw_path = base + "/Frameworks";
+        if (stat(fw_path.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) {
+            program_path = fw_path;
+        }
+    }
+#endif
 
     lok::Office* office = lok::lok_cpp_init(program_path.c_str());
     if (!office) {

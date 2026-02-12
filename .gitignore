@@ -3,7 +3,10 @@ lo-src/
 
 # Build output
 output/
+output-*/
+artifacts/
 slimlo-api/build/
+slimlo-api/build-*/
 
 # .NET build artifacts
 dotnet/**/bin/

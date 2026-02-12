@@ -34,29 +34,38 @@ if [ -d "$LO_SRC/.git" ]; then
 fi
 
 # --- Step 1: Add --export-dynamic to Library_merged.mk ---
-if ! grep -q 'export-dynamic' "$MERGED_MK"; then
-    TAB="$(printf '\t')"
-    TMPBLOCK=$(mktemp)
-    cat > "$TMPBLOCK" << BLOCKEOF
+# On macOS (ld64), default-visibility symbols are exported automatically.
+# --export-dynamic is only needed on Linux (GNU ld) to preserve symbols in .dynsym.
+case "$(uname -s)" in
+    Darwin)
+        echo "    macOS: skipping --export-dynamic (ld64 exports default-visibility symbols automatically)"
+        ;;
+    *)
+        if ! grep -q 'export-dynamic' "$MERGED_MK"; then
+            TAB="$(printf '\t')"
+            TMPBLOCK=$(mktemp)
+            cat > "$TMPBLOCK" << BLOCKEOF
 
 # SlimLO: export all default-visibility symbols for UNO dlsym + non-merged lib linking
 \$(eval \$(call gb_Library_add_ldflags,merged,\\
 ${TAB}-Wl\$(COMMA)--export-dynamic \\
 ))
 BLOCKEOF
-    # Insert the block after the gb_Library_Library,merged line
-    sed "/gb_Library_Library,merged/r $TMPBLOCK" "$MERGED_MK" > "$MERGED_MK.tmp" && mv "$MERGED_MK.tmp" "$MERGED_MK"
-    rm -f "$TMPBLOCK"
-    echo "    Added --export-dynamic to Library_merged.mk"
-fi
+            # Insert the block after the gb_Library_Library,merged line
+            sed "/gb_Library_Library,merged/r $TMPBLOCK" "$MERGED_MK" > "$MERGED_MK.tmp" && mv "$MERGED_MK.tmp" "$MERGED_MK"
+            rm -f "$TMPBLOCK"
+            echo "    Added --export-dynamic to Library_merged.mk"
+        fi
 
-# Verify
-if grep -q 'export-dynamic' "$MERGED_MK"; then
-    echo "    Verified: --export-dynamic in Library_merged.mk"
-    grep -A4 'gb_Library_add_ldflags,merged' "$MERGED_MK" | head -6
-else
-    echo "    ERROR: Failed to add --export-dynamic to Library_merged.mk"
-    exit 1
-fi
+        # Verify
+        if grep -q 'export-dynamic' "$MERGED_MK"; then
+            echo "    Verified: --export-dynamic in Library_merged.mk"
+            grep -A4 'gb_Library_add_ldflags,merged' "$MERGED_MK" | head -6
+        else
+            echo "    ERROR: Failed to add --export-dynamic to Library_merged.mk"
+            exit 1
+        fi
+        ;;
+esac
 
 echo "    Patch 008 complete"

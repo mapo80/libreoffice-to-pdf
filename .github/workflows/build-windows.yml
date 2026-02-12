@@ -1,0 +1,56 @@
+name: Build Windows x64
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', 'dotnet/**']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 720
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: egor-tensin/setup-cygwin@v4
+        with:
+          packages: >-
+            autoconf automake bison flex gperf libtool make
+            patch pkg-config zip unzip wget perl python3
+            python3-setuptools findutils
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - run: choco install nasm -y
+        shell: pwsh
+
+      - uses: actions/cache@v4
+        with:
+          path: C:\cygwin\home\runneradmin\.ccache
+          key: ccache-win-x64-${{ hashFiles('LO_VERSION', 'distro-configs/SlimLO.conf') }}
+          restore-keys: ccache-win-x64-
+
+      - name: Build SlimLO
+        shell: C:\cygwin\bin\bash.exe --login -eo pipefail {0}
+        env:
+          CHERE_INVOKING: 1
+          ICU_DATA_FILTER_FILE: /cygdrive/d/a/${{ github.event.repository.name }}/${{ github.event.repository.name }}/icu-filter.json
+        run: |
+          cd /cygdrive/d/a/${{ github.event.repository.name }}/${{ github.event.repository.name }}
+          export NPROC=4
+          export LO_SRC_DIR=/cygdrive/d/lo-src
+          export OUTPUT_DIR=/cygdrive/d/a/${{ github.event.repository.name }}/${{ github.event.repository.name }}/output
+          ./scripts/build.sh
+
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: slimlo-win-x64
+          path: output/
+          retention-days: 30
