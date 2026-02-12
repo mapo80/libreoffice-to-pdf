@@ -20,7 +20,7 @@ jobs:
           install: >-
             autoconf automake bison flex gperf libtool make
             patch pkg-config zip unzip wget perl python3
-            python-setuptools findutils
+            python-setuptools findutils git
 
       - uses: ilammy/msvc-dev-cmd@v1
         with:
