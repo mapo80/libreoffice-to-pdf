@@ -1,0 +1,44 @@
+name: Build Linux x64
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', 'dotnet/**']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 720
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build SlimLO
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.linux-x64
+          load: true
+          tags: slimlo-build
+          build-args: |
+            SCRIPTS_HASH=${{ hashFiles('scripts/*.sh', 'patches/*.sh', 'patches/*.postautogen') }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Extract artifacts
+        run: |
+          mkdir -p output
+          docker run --rm -v $(pwd)/output:/output slimlo-build
+
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: slimlo-linux-x64
+          path: output/
+          retention-days: 30
