@@ -1,9 +1,6 @@
 name: Build Linux arm64
 
 on:
-  push:
-    branches: [main]
-    paths-ignore: ['**.md', 'dotnet/**']
   pull_request:
     branches: [main]
   workflow_dispatch:

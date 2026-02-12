@@ -1,9 +1,6 @@
 name: Build Windows x64
 
 on:
-  push:
-    branches: [main]
-    paths-ignore: ['**.md', 'dotnet/**']
   pull_request:
     branches: [main]
   workflow_dispatch:
