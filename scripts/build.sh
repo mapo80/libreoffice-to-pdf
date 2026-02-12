@@ -20,8 +20,12 @@ esac
 # macOS: Ensure Homebrew tools take precedence over system ones.
 # LO requires GNU Make >= 4.0 (macOS ships 3.81) and gperf >= 3.1 (macOS ships 3.0.3).
 if [ "$PLATFORM" = "macos" ]; then
+    # arm64 Homebrew (/opt/homebrew)
     [ -d "/opt/homebrew/opt/make/libexec/gnubin" ] && export PATH="/opt/homebrew/opt/make/libexec/gnubin:$PATH"
     [ -d "/opt/homebrew/bin" ] && export PATH="/opt/homebrew/bin:$PATH"
+    # Intel Homebrew (/usr/local)
+    [ -d "/usr/local/opt/make/libexec/gnubin" ] && export PATH="/usr/local/opt/make/libexec/gnubin:$PATH"
+    [ -d "/usr/local/bin" ] && export PATH="/usr/local/bin:$PATH"
 fi
 
 echo "============================================"
