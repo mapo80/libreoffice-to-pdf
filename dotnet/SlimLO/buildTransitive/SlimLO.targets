@@ -21,6 +21,9 @@
     <None Include="$(SlimLORuntimeDir)*.so.*" CopyToOutputDirectory="PreserveNewest" Link="%(Filename)%(Extension)" />
     <None Include="$(SlimLORuntimeDir)*.dylib" CopyToOutputDirectory="PreserveNewest" Link="%(Filename)%(Extension)" />
     <None Include="$(SlimLORuntimeDir)*.dll" CopyToOutputDirectory="PreserveNewest" Link="%(Filename)%(Extension)" />
+    <!-- Copy worker executable -->
+    <None Include="$(SlimLORuntimeDir)slimlo_worker" Condition="Exists('$(SlimLORuntimeDir)slimlo_worker')" CopyToOutputDirectory="PreserveNewest" Link="slimlo_worker" />
+    <None Include="$(SlimLORuntimeDir)slimlo_worker.exe" Condition="Exists('$(SlimLORuntimeDir)slimlo_worker.exe')" CopyToOutputDirectory="PreserveNewest" Link="slimlo_worker.exe" />
     <!-- Copy UNO registries and config -->
     <None Include="$(SlimLORuntimeDir)*.rdb" CopyToOutputDirectory="PreserveNewest" Link="%(Filename)%(Extension)" />
     <None Include="$(SlimLORuntimeDir)*rc" CopyToOutputDirectory="PreserveNewest" Link="%(Filename)%(Extension)" />

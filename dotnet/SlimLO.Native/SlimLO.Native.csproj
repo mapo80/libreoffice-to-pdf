@@ -32,6 +32,9 @@
     <Content Include="$(NativeDir)program/**/*.so.*" PackagePath="runtimes/$(RuntimeIdentifier)/native/" />
     <Content Include="$(NativeDir)program/**/*.dylib" PackagePath="runtimes/$(RuntimeIdentifier)/native/" />
     <Content Include="$(NativeDir)program/**/*.dll" PackagePath="runtimes/$(RuntimeIdentifier)/native/" />
+    <!-- Worker executable -->
+    <Content Include="$(NativeDir)program/slimlo_worker" Condition="Exists('$(NativeDir)program/slimlo_worker')" PackagePath="runtimes/$(RuntimeIdentifier)/native/" />
+    <Content Include="$(NativeDir)program/slimlo_worker.exe" Condition="Exists('$(NativeDir)program/slimlo_worker.exe')" PackagePath="runtimes/$(RuntimeIdentifier)/native/" />
     <!-- UNO registries and config -->
     <Content Include="$(NativeDir)program/*.rdb" PackagePath="runtimes/$(RuntimeIdentifier)/native/" />
     <Content Include="$(NativeDir)program/*rc" PackagePath="runtimes/$(RuntimeIdentifier)/native/" />
