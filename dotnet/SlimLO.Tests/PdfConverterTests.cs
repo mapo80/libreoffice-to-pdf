@@ -65,6 +65,20 @@ internal static class TestHelpers
         }
         return null;
     }
+
+    public static string? FindFontDir()
+    {
+        var dir = AppContext.BaseDirectory;
+        for (int i = 0; i < 8; i++)
+        {
+            var candidate = Path.Combine(dir, "tests", "fixtures", "fonts");
+            if (Directory.Exists(candidate))
+                return candidate;
+            dir = Path.GetDirectoryName(dir)!;
+            if (dir == null) break;
+        }
+        return null;
+    }
 }
 
 // ===========================================================================
@@ -1246,6 +1260,100 @@ public class PdfConverterIntegrationTests : IAsyncDisposable
 
         await converter.DisposeAsync();
         await converter.DisposeAsync(); // should not throw
+    }
+
+    // --- Custom font tests ---
+    //
+    // FontDirectories works cross-platform:
+    // - Linux: SAL_FONTPATH → fontconfig
+    // - macOS: CTFontManagerRegisterFontsForURL → CoreText (process-level)
+
+    [Fact]
+    public async Task ConvertAsync_WithCustomBarcodeFont_Succeeds()
+    {
+        if (!TestHelpers.CanRunIntegration()) return;
+
+        var fixturePath = TestHelpers.FindFixture("barcode_font.docx");
+        if (fixturePath == null) return;
+
+        var fontDir = TestHelpers.FindFontDir();
+        if (fontDir == null) return;
+
+        await using var converter = PdfConverter.Create(new PdfConverterOptions
+        {
+            ResourcePath = TestHelpers.GetResourcePath(),
+            FontDirectories = [fontDir]
+        });
+
+        var output = Path.Combine(Path.GetTempPath(), $"slimlo_barcode_{Guid.NewGuid():N}.pdf");
+        try
+        {
+            var result = await converter.ConvertAsync(fixturePath, output);
+            Assert.True(result.Success, $"Conversion failed: {result.ErrorMessage}");
+            Assert.True(File.Exists(output));
+
+            var pdfBytes = await File.ReadAllBytesAsync(output);
+            Assert.True(pdfBytes.Length > 100, "PDF too small");
+
+            // PDF header check
+            Assert.Equal((byte)'%', pdfBytes[0]);
+            Assert.Equal((byte)'P', pdfBytes[1]);
+            Assert.Equal((byte)'D', pdfBytes[2]);
+            Assert.Equal((byte)'F', pdfBytes[3]);
+
+            // The barcode font should be embedded in the PDF with its actual name
+            // (possibly subset-prefixed like ABCDEF+LibreBarcode128-Regular)
+            var pdfText = System.Text.Encoding.ASCII.GetString(pdfBytes);
+            Assert.True(
+                pdfText.Contains("Barcode") || pdfText.Contains("barcode"),
+                "PDF should contain the barcode font when FontDirectories is set");
+
+            // Verify no font substitution diagnostic for the barcode font
+            var barcodeSubstitution = result.Diagnostics
+                .Where(d => d.Category == DiagnosticCategory.Font)
+                .Any(d => d.FontName?.Contains("Barcode") == true);
+            Assert.False(barcodeSubstitution,
+                "Barcode font was substituted despite being in FontDirectories");
+        }
+        finally
+        {
+            if (File.Exists(output)) File.Delete(output);
+        }
+    }
+
+    [Fact]
+    public async Task ConvertAsync_WithoutBarcodeFont_StillConverts()
+    {
+        if (!TestHelpers.CanRunIntegration()) return;
+
+        var fixturePath = TestHelpers.FindFixture("barcode_font.docx");
+        if (fixturePath == null) return;
+
+        // Create converter WITHOUT custom font directory — font will be substituted
+        await using var converter = PdfConverter.Create(new PdfConverterOptions
+        {
+            ResourcePath = TestHelpers.GetResourcePath()
+        });
+
+        var output = Path.Combine(Path.GetTempPath(), $"slimlo_nobarcode_{Guid.NewGuid():N}.pdf");
+        try
+        {
+            var result = await converter.ConvertAsync(fixturePath, output);
+            Assert.True(result.Success, $"Conversion failed: {result.ErrorMessage}");
+            Assert.True(File.Exists(output));
+
+            // The PDF should be valid even without the barcode font
+            var pdfBytes = await File.ReadAllBytesAsync(output);
+            Assert.True(pdfBytes.Length > 100, "PDF too small");
+
+            // The barcode font should NOT appear in the PDF since it's not available
+            var pdfText = System.Text.Encoding.ASCII.GetString(pdfBytes);
+            Assert.DoesNotContain("LibreBarcode", pdfText);
+        }
+        finally
+        {
+            if (File.Exists(output)) File.Delete(output);
+        }
     }
 
     // --- Concurrent conversions ---

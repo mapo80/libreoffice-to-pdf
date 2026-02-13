@@ -104,6 +104,15 @@ target_include_directories(slimlo_worker PRIVATE
 
 target_link_libraries(slimlo_worker PRIVATE slimlo)
 
+# On macOS, the worker uses CoreText to register custom fonts at the process
+# level (SAL_FONTPATH alone doesn't work with the osx VCL backend).
+if(APPLE)
+    target_link_libraries(slimlo_worker PRIVATE
+        "-framework CoreText"
+        "-framework CoreFoundation"
+    )
+endif()
+
 if(NOT WIN32)
     set_target_properties(slimlo_worker PROPERTIES
         BUILD_RPATH "${LO_LIB_DIR}"

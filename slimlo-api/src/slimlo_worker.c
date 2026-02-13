@@ -47,6 +47,12 @@
   #define PATH_SEP   ":"
 #endif
 
+#ifdef __APPLE__
+  #include <dirent.h>
+  #include <CoreFoundation/CoreFoundation.h>
+  #include <CoreText/CoreText.h>
+#endif
+
 /* Maximum stderr capture buffer: 256 KB per conversion */
 #define STDERR_BUF_SIZE (256 * 1024)
 
@@ -357,6 +363,55 @@ static cJSON* parse_diagnostics(const char* stderr_text) {
 }
 
 /* --------------------------------------------------------------------------
+ * macOS CoreText font registration
+ *
+ * On macOS, LibreOffice's VCL uses CoreText for font enumeration, which
+ * ignores SAL_FONTPATH. We register custom fonts at the process level via
+ * CTFontManagerRegisterFontsForURL so CoreText (and thus LO) can find them.
+ * -------------------------------------------------------------------------- */
+
+#ifdef __APPLE__
+static int has_font_extension(const char* name) {
+    size_t len = strlen(name);
+    if (len < 4) return 0;
+    const char* ext = name + len - 4;
+    if (strcasecmp(ext, ".ttf") == 0) return 1;
+    if (strcasecmp(ext, ".otf") == 0) return 1;
+    if (strcasecmp(ext, ".ttc") == 0) return 1;
+    return 0;
+}
+
+static void register_fonts_coretext(const char* dir_path) {
+    DIR* d = opendir(dir_path);
+    if (!d) return;
+
+    struct dirent* entry;
+    while ((entry = readdir(d)) != NULL) {
+        if (!has_font_extension(entry->d_name)) continue;
+
+        /* Build full path */
+        char full_path[4096];
+        snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, entry->d_name);
+
+        CFStringRef path_str = CFStringCreateWithCString(
+            kCFAllocatorDefault, full_path, kCFStringEncodingUTF8);
+        if (!path_str) continue;
+
+        CFURLRef url = CFURLCreateWithFileSystemPath(
+            kCFAllocatorDefault, path_str, kCFURLPOSIXPathStyle, false);
+        CFRelease(path_str);
+        if (!url) continue;
+
+        CFErrorRef error = NULL;
+        CTFontManagerRegisterFontsForURL(url, kCTFontManagerScopeProcess, &error);
+        if (error) CFRelease(error);
+        CFRelease(url);
+    }
+    closedir(d);
+}
+#endif
+
+/* --------------------------------------------------------------------------
  * Command handlers
  * -------------------------------------------------------------------------- */
 
@@ -401,6 +456,17 @@ static int handle_init(cJSON* msg) {
 #endif
             free(font_path);
         }
+
+#ifdef __APPLE__
+        /* On macOS, SAL_FONTPATH alone is not enough — the osx VCL backend
+         * uses CoreText for font enumeration, which ignores SAL_FONTPATH.
+         * Register each font file with CoreText at the process level. */
+        for (int i = 0; i < count; i++) {
+            cJSON* item = cJSON_GetArrayItem(fp, i);
+            if (cJSON_IsString(item))
+                register_fonts_coretext(cJSON_GetStringValue(item));
+        }
+#endif
     }
 
     /* Initialize SlimLO */
