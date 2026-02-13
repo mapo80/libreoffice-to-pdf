@@ -56,7 +56,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: C:\msys64\home\runneradmin\.ccache
-          key: ccache-win-x64-${{ hashFiles('LO_VERSION', 'distro-configs/SlimLO.conf') }}
+          key: ccache-win-x64-${{ hashFiles('LO_VERSION', 'distro-configs/SlimLO.conf', 'distro-configs/SlimLO-windows.conf', 'scripts/*.sh', 'patches/*.sh', 'patches/*.postautogen') }}
           restore-keys: ccache-win-x64-
 
       - name: Build SlimLO
