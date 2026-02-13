@@ -80,7 +80,12 @@ echo ""
 DISTRO_NAME="${DISTRO_CONF%.conf}"
 echo ">>> Step 4: Configuring LibreOffice (distro=$DISTRO_NAME)..."
 cd "$LO_SRC_DIR"
-./autogen.sh --with-distro="$DISTRO_NAME"
+AUTOGEN_ARGS=("--with-distro=$DISTRO_NAME")
+if [ -n "${PKG_CONFIG:-}" ]; then
+    echo "    Using PKG_CONFIG=$PKG_CONFIG"
+    AUTOGEN_ARGS=("PKG_CONFIG=$PKG_CONFIG" "${AUTOGEN_ARGS[@]}")
+fi
+./autogen.sh "${AUTOGEN_ARGS[@]}"
 echo ""
 
 # -----------------------------------------------------------

@@ -29,14 +29,20 @@ jobs:
       - name: Install pkgconf for LO
         shell: msys2 {0}
         run: |
-          # LO needs a Windows-native pkgconf-2.4.3.exe
+          # LO (build_os=cygwin) expects a working pkgconf-2.4.3.exe
           pacman -S --noconfirm mingw-w64-x86_64-pkgconf
-          cp /mingw64/bin/pkgconf.exe /usr/bin/pkgconf-2.4.3.exe
-          # Ensure MSYS pkgconf + pkg-config alias work for autoconf checks
-          pacman -S --noconfirm pkgconf
-          ls /usr/bin/pkg-config* 2>/dev/null || ln -s /usr/bin/pkgconf.exe /usr/bin/pkg-config.exe
-          echo "pkg-config version: $(pkg-config --version)"
-          echo "pkgconf-2.4.3 version: $(pkgconf-2.4.3 --version)"
+          cat >/usr/local/bin/pkgconf-2.4.3.exe <<'EOF'
+          #!/usr/bin/env bash
+          export PATH="/mingw64/bin:$PATH"
+          exec /mingw64/bin/pkgconf.exe "$@"
+          EOF
+          chmod +x /usr/local/bin/pkgconf-2.4.3.exe
+          ln -sf /usr/local/bin/pkgconf-2.4.3.exe /usr/local/bin/pkg-config
+
+          command -v pkgconf-2.4.3.exe
+          pkgconf-2.4.3.exe --version
+          pkgconf-2.4.3.exe --atleast-pkgconfig-version 0.9.0
+          pkg-config --version
 
       - run: choco install nasm -y
         shell: pwsh
@@ -52,9 +58,10 @@ jobs:
         env:
           CHERE_INVOKING: 1
           ICU_DATA_FILTER_FILE: /d/a/${{ github.event.repository.name }}/${{ github.event.repository.name }}/icu-filter.json
+          PKG_CONFIG: /usr/local/bin/pkgconf-2.4.3.exe
         run: |
           cd /d/a/${{ github.event.repository.name }}/${{ github.event.repository.name }}
-          export PKG_CONFIG=/usr/bin/pkgconf-2.4.3.exe
+          export PATH="/usr/local/bin:/mingw64/bin:$PATH"
           export NPROC=4
           export LO_SRC_DIR=/d/lo-src
           export OUTPUT_DIR=/d/a/${{ github.event.repository.name }}/${{ github.event.repository.name }}/output
