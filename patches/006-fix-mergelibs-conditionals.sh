@@ -78,6 +78,19 @@ wrap_optional DESKTOP fps_office
 echo "    --- DBCONNECTIVITY guards ---"
 wrap_optional DBCONNECTIVITY frm
 
+# AVMEDIA on WNT: avmediawin is guarded by AVMEDIA in Repository.mk
+# but unconditional in merged list for WNT.
+echo "    --- AVMEDIA/WNT guard ---"
+if grep -q 'gb_Helper_optional,AVMEDIA,.*avmediawin' "$MERGED"; then
+    echo "    avmediawin already patched (skipping)"
+elif grep -q '\$(if $(filter WNT,$(OS)),avmediawin)' "$MERGED"; then
+    sed 's/$(if $(filter WNT,$(OS)),avmediawin)/$(call gb_Helper_optional,AVMEDIA,$(if $(filter WNT,$(OS)),avmediawin))/' \
+        "$MERGED" > "$MERGED.tmp" && mv "$MERGED.tmp" "$MERGED"
+    echo "    Wrapped: avmediawin (optional on AVMEDIA)"
+else
+    wrap_optional AVMEDIA avmediawin
+fi
+
 # ENABLE_SLIMLO: filter libraries stripped by patch 004
 echo "    --- ENABLE_SLIMLO guards (filter libs from patch 004) ---"
 wrap_exclude ENABLE_SLIMLO icg
