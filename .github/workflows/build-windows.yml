@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: windows-2022
     timeout-minutes: 720
 
     steps:
@@ -68,6 +68,9 @@ jobs:
           export PATH="/usr/local/bin:/mingw64/bin:$PATH"
           perl -e 'print "ProgramFiles(x86)=$ENV{\"ProgramFiles(x86)\"}\n"'
           test -f "/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe" && echo "vswhere found" || (echo "vswhere missing" && exit 1)
+          vswhere="/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe"
+          VS_INSTALL="$("$vswhere" -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | head -1)"
+          test -n "$VS_INSTALL" && echo "VC tools install: $VS_INSTALL" || (echo "No VC.Tools.x86.x64 installation found" && exit 1)
           export NPROC=4
           export LO_SRC_DIR=/d/lo-src
           export OUTPUT_DIR=/d/a/${{ github.event.repository.name }}/${{ github.event.repository.name }}/output
