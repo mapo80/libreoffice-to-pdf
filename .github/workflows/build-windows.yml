@@ -33,6 +33,7 @@ jobs:
           # LO (build_os=cygwin) expects a working pkgconf-2.4.3.exe
           pacman -S --noconfirm mingw-w64-x86_64-pkgconf
           mkdir -p /usr/local/bin
+          ln -sf /usr/bin/cygpath /usr/local/bin/wslpath
           ln -sf /usr/bin/python3 /usr/local/bin/python
           cat >/usr/local/bin/pkgconf-2.4.3.exe <<'EOF'
           #!/usr/bin/env bash
@@ -46,6 +47,7 @@ jobs:
           pkgconf-2.4.3.exe --version
           pkgconf-2.4.3.exe --atleast-pkgconfig-version 0.9.0
           pkg-config --version
+          wslpath -u D:/lo-src
           python --version
           python3 --version
 
