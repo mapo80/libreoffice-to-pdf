@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Packaging-only project: no code, just native assets -->
+    <TargetFramework>net8.0</TargetFramework>
+    <NoBuild>true</NoBuild>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+
+    <!-- NuGet metadata -->
+    <PackageId>SlimLO.NativeAssets.macOS</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>SlimLO Contributors</Authors>
+    <Description>Native macOS runtime for SlimLO PDF converter. Contains the LibreOffice headless engine, SlimLO C API, and worker process for arm64 and x64.</Description>
+    <PackageLicenseExpression>MPL-2.0</PackageLicenseExpression>
+    <PackageTags>pdf;conversion;libreoffice;native;macos</PackageTags>
+    <RepositoryType>git</RepositoryType>
+    <NoWarn>NU5128</NoWarn>
+  </PropertyGroup>
+
+  <!-- Input directories for native artifacts (override via -p:NativeDir_arm64=path/) -->
+  <PropertyGroup>
+    <NativeDir_arm64 Condition="'$(NativeDir_arm64)' == ''">../../output-macos-arm64/</NativeDir_arm64>
+    <NativeDir_x64 Condition="'$(NativeDir_x64)' == ''">../../output-macos-x64/</NativeDir_x64>
+  </PropertyGroup>
+
+  <!-- osx-arm64 runtime assets (preserve program/ hierarchy for WorkerLocator) -->
+  <ItemGroup Condition="Exists('$(NativeDir_arm64)')">
+    <Content Include="$(NativeDir_arm64)program/**" PackagePath="runtimes/osx-arm64/native/program/" />
+    <Content Include="$(NativeDir_arm64)share/**" PackagePath="runtimes/osx-arm64/native/share/" />
+    <Content Include="$(NativeDir_arm64)presets/**" PackagePath="runtimes/osx-arm64/native/presets/" />
+  </ItemGroup>
+
+  <!-- osx-x64 runtime assets -->
+  <ItemGroup Condition="Exists('$(NativeDir_x64)')">
+    <Content Include="$(NativeDir_x64)program/**" PackagePath="runtimes/osx-x64/native/program/" />
+    <Content Include="$(NativeDir_x64)share/**" PackagePath="runtimes/osx-x64/native/share/" />
+    <Content Include="$(NativeDir_x64)presets/**" PackagePath="runtimes/osx-x64/native/presets/" />
+  </ItemGroup>
+
+  <!-- Ship MSBuild .targets so consumers get native files copied to output -->
+  <ItemGroup>
+    <None Include="build/SlimLO.NativeAssets.macOS.targets" Pack="true" PackagePath="build/" />
+    <None Include="buildTransitive/SlimLO.NativeAssets.macOS.targets" Pack="true" PackagePath="buildTransitive/" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,55 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <PropertyGroup>
+    <_SlimLORid_macOS Condition="'$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</_SlimLORid_macOS>
+    <_SlimLORid_macOS Condition="'$(_SlimLORid_macOS)' == ''">$(NETCoreSdkRuntimeIdentifier)</_SlimLORid_macOS>
+    <_SlimLORoot_macOS>$(MSBuildThisFileDirectory)../runtimes/$(_SlimLORid_macOS)/native/</_SlimLORoot_macOS>
+  </PropertyGroup>
+
+  <Target Name="_CopySlimLOAssets_macOS" AfterTargets="Build"
+          Condition="Exists('$(_SlimLORoot_macOS)program')">
+    <ItemGroup>
+      <_SlimLOProg_macOS Include="$(_SlimLORoot_macOS)program/**" />
+      <_SlimLOShare_macOS Include="$(_SlimLORoot_macOS)share/**" />
+      <_SlimLOPresets_macOS Include="$(_SlimLORoot_macOS)presets/**" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_SlimLOProg_macOS)"
+          DestinationFiles="@(_SlimLOProg_macOS->'$(OutDir)program/%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_SlimLOShare_macOS)"
+          DestinationFiles="@(_SlimLOShare_macOS->'$(OutDir)share/%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" Condition="'@(_SlimLOShare_macOS)' != ''" />
+    <Copy SourceFiles="@(_SlimLOPresets_macOS)"
+          DestinationFiles="@(_SlimLOPresets_macOS->'$(OutDir)presets/%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" Condition="'@(_SlimLOPresets_macOS)' != ''" />
+    <MakeDir Directories="$(OutDir)presets" />
+    <!-- macOS .app bundle paths: Resources/ and Frameworks/ both map to program/
+         because on macOS, program/ contains everything (libs, RC files, registry,
+         config, filter). The share/ dir is redundant but kept for consistency. -->
+    <Exec Command="ln -sf program '$(OutDir)Resources'" Condition="!Exists('$(OutDir)Resources')" />
+    <Exec Command="ln -sf program '$(OutDir)Frameworks'" Condition="!Exists('$(OutDir)Frameworks')" />
+  </Target>
+
+  <!-- Also copy on Publish -->
+  <Target Name="_PublishSlimLOAssets_macOS" AfterTargets="Publish"
+          Condition="Exists('$(_SlimLORoot_macOS)program')">
+    <ItemGroup>
+      <_SlimLOProgPub_macOS Include="$(_SlimLORoot_macOS)program/**" />
+      <_SlimLOSharePub_macOS Include="$(_SlimLORoot_macOS)share/**" />
+      <_SlimLOPresetsPub_macOS Include="$(_SlimLORoot_macOS)presets/**" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_SlimLOProgPub_macOS)"
+          DestinationFiles="@(_SlimLOProgPub_macOS->'$(PublishDir)program/%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_SlimLOSharePub_macOS)"
+          DestinationFiles="@(_SlimLOSharePub_macOS->'$(PublishDir)share/%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" Condition="'@(_SlimLOSharePub_macOS)' != ''" />
+    <Copy SourceFiles="@(_SlimLOPresetsPub_macOS)"
+          DestinationFiles="@(_SlimLOPresetsPub_macOS->'$(PublishDir)presets/%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" Condition="'@(_SlimLOPresetsPub_macOS)' != ''" />
+    <MakeDir Directories="$(PublishDir)presets" />
+    <Exec Command="ln -sf program '$(PublishDir)Resources'" Condition="!Exists('$(PublishDir)Resources')" />
+    <Exec Command="ln -sf program '$(PublishDir)Frameworks'" Condition="!Exists('$(PublishDir)Frameworks')" />
+  </Target>
+
+</Project>

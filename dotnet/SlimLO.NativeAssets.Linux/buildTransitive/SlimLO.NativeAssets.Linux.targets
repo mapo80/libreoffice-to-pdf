@@ -1,0 +1,4 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <!-- Transitive version — identical to build/ targets. -->
+  <Import Project="$(MSBuildThisFileDirectory)../build/SlimLO.NativeAssets.Linux.targets" />
+</Project>
