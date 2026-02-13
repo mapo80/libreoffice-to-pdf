@@ -16,6 +16,7 @@ jobs:
       - uses: msys2/setup-msys2@v2
         with:
           msystem: MSYS
+          path-type: inherit
           update: false
           install: >-
             autoconf automake bison flex gperf libtool make
@@ -58,11 +59,15 @@ jobs:
         shell: msys2 {0}
         env:
           CHERE_INVOKING: 1
+          'ProgramFiles(x86)': C:\Program Files (x86)
+          PROGRAMFILESX86: C:\Program Files (x86)
           ICU_DATA_FILTER_FILE: /d/a/${{ github.event.repository.name }}/${{ github.event.repository.name }}/icu-filter.json
           PKG_CONFIG: /usr/local/bin/pkgconf-2.4.3.exe
         run: |
           cd /d/a/${{ github.event.repository.name }}/${{ github.event.repository.name }}
           export PATH="/usr/local/bin:/mingw64/bin:$PATH"
+          perl -e 'print "ProgramFiles(x86)=$ENV{\"ProgramFiles(x86)\"}\n"'
+          test -f "/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe" && echo "vswhere found" || (echo "vswhere missing" && exit 1)
           export NPROC=4
           export LO_SRC_DIR=/d/lo-src
           export OUTPUT_DIR=/d/a/${{ github.event.repository.name }}/${{ github.event.repository.name }}/output
