@@ -54,6 +54,7 @@ jobs:
           ICU_DATA_FILTER_FILE: /d/a/${{ github.event.repository.name }}/${{ github.event.repository.name }}/icu-filter.json
         run: |
           cd /d/a/${{ github.event.repository.name }}/${{ github.event.repository.name }}
+          export PKG_CONFIG=/usr/bin/pkgconf-2.4.3.exe
           export NPROC=4
           export LO_SRC_DIR=/d/lo-src
           export OUTPUT_DIR=/d/a/${{ github.event.repository.name }}/${{ github.event.repository.name }}/output
