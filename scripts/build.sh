@@ -68,6 +68,7 @@ echo ""
 echo ">>> Step 3: Installing SlimLO distro config..."
 case "$PLATFORM" in
     macos) DISTRO_CONF="SlimLO-macOS.conf" ;;
+    windows) DISTRO_CONF="SlimLO-windows.conf" ;;
     *)     DISTRO_CONF="SlimLO.conf" ;;
 esac
 cp "$PROJECT_DIR/distro-configs/$DISTRO_CONF" "$LO_SRC_DIR/distro-configs/$DISTRO_CONF"
