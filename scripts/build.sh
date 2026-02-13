@@ -86,15 +86,17 @@ if [ -n "${PKG_CONFIG:-}" ]; then
     echo "    Using PKG_CONFIG=$PKG_CONFIG"
     AUTOGEN_ARGS=("PKG_CONFIG=$PKG_CONFIG" "${AUTOGEN_ARGS[@]}")
 fi
-if [ -n "${PYTHON:-}" ]; then
-    echo "    Using PYTHON=$PYTHON"
-    AUTOGEN_ARGS=("PYTHON=$PYTHON" "${AUTOGEN_ARGS[@]}")
-elif command -v python >/dev/null 2>&1; then
-    AUTOGEN_ARGS=("PYTHON=$(command -v python)" "${AUTOGEN_ARGS[@]}")
-elif command -v python3 >/dev/null 2>&1; then
-    PYTHON_BIN="$(command -v python3)"
-    echo "    Using PYTHON=$PYTHON_BIN"
-    AUTOGEN_ARGS=("PYTHON=$PYTHON_BIN" "${AUTOGEN_ARGS[@]}")
+PYTHON_BUILD_BIN="${PYTHON_FOR_BUILD:-${PYTHON:-}}"
+if [ -z "$PYTHON_BUILD_BIN" ] && command -v python >/dev/null 2>&1; then
+    PYTHON_BUILD_BIN="$(command -v python)"
+fi
+if [ -z "$PYTHON_BUILD_BIN" ] && command -v python3 >/dev/null 2>&1; then
+    PYTHON_BUILD_BIN="$(command -v python3)"
+fi
+if [ -n "$PYTHON_BUILD_BIN" ]; then
+    echo "    Using PYTHON_FOR_BUILD=$PYTHON_BUILD_BIN"
+    export PYTHON_FOR_BUILD="$PYTHON_BUILD_BIN"
+    export PYTHON="${PYTHON:-$PYTHON_BUILD_BIN}"
 fi
 if [ "$PLATFORM" = "windows" ]; then
     VISUAL_STUDIO_YEAR="${SLIMLO_VISUAL_STUDIO_YEAR:-2022}"
@@ -104,6 +106,8 @@ if [ "$PLATFORM" = "windows" ]; then
     AUTOGEN_ARGS+=("--with-visual-studio=$VISUAL_STUDIO_YEAR")
     env "ProgramFiles(x86)=$WIN_PROGRAMFILES_X86" \
         "PROGRAMFILESX86=$WIN_PROGRAMFILES_X86" \
+        "PYTHON_FOR_BUILD=${PYTHON_FOR_BUILD:-}" \
+        "PYTHON=${PYTHON:-}" \
         ./autogen.sh "${AUTOGEN_ARGS[@]}"
 else
     ./autogen.sh "${AUTOGEN_ARGS[@]}"
