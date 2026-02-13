@@ -26,6 +26,25 @@ if [ "$PLATFORM" = "windows" ] && [ -n "${MSYSTEM:-}" ]; then
     unset WSL
 fi
 
+if [ "$PLATFORM" = "windows" ] && ! command -v wslpath >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; then
+    SHIM_DIR="$PROJECT_DIR/.slimlo-tools"
+    mkdir -p "$SHIM_DIR"
+    cat > "$SHIM_DIR/wslpath" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+MODE="${1:-}"
+if [ "$MODE" = "-u" ] || [ "$MODE" = "-w" ] || [ "$MODE" = "-m" ]; then
+    shift
+else
+    MODE="-u"
+fi
+exec cygpath "$MODE" "$1"
+EOF
+    chmod +x "$SHIM_DIR/wslpath"
+    export PATH="$SHIM_DIR:$PATH"
+    echo "Installed local wslpath shim: $SHIM_DIR/wslpath"
+fi
+
 # macOS: Ensure Homebrew tools take precedence over system ones.
 # LO requires GNU Make >= 4.0 (macOS ships 3.81) and gperf >= 3.1 (macOS ships 3.0.3).
 if [ "$PLATFORM" = "macos" ]; then
