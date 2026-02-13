@@ -34,6 +34,17 @@ if [ "$PLATFORM" = "windows" ] && [ -n "${UCRTVersion:-}" ]; then
     unset UCRTVersion
 fi
 
+if [ "$PLATFORM" = "windows" ] && command -v cl.exe >/dev/null 2>&1; then
+    CL_BIN="$(command -v cl.exe)"
+    CL_DIR="$(dirname "$CL_BIN")"
+    case ":$PATH:" in
+        *":$CL_DIR:"*) ;;
+        *) export PATH="$CL_DIR:$PATH" ;;
+    esac
+    echo "Prioritized MSVC toolchain dir: $CL_DIR"
+    echo "MSVC linker in use: $(command -v link.exe || echo 'not found')"
+fi
+
 if [ "$PLATFORM" = "windows" ] && ! command -v wslpath >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; then
     SHIM_DIR="$PROJECT_DIR/.slimlo-tools"
     mkdir -p "$SHIM_DIR"

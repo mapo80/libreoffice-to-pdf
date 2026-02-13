@@ -70,7 +70,7 @@ jobs:
           PKG_CONFIG: /usr/local/bin/pkgconf-2.4.3.exe
         run: |
           cd /d/a/${{ github.event.repository.name }}/${{ github.event.repository.name }}
-          export PATH="/usr/local/bin:/mingw64/bin:$PATH"
+          export PATH="/usr/local/bin:$PATH:/mingw64/bin"
           NASM_BIN="$(command -v nasm || command -v nasm.exe || true)"
           [ -n "$NASM_BIN" ] || (echo "nasm not found in PATH" && exit 1)
           export NASM="$NASM_BIN"
@@ -81,6 +81,12 @@ jobs:
           vswhere="/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe"
           VS_INSTALL="$("$vswhere" -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | head -1)"
           test -n "$VS_INSTALL" && echo "VC tools install: $VS_INSTALL" || (echo "No VC.Tools.x86.x64 installation found" && exit 1)
+          CL_BIN="$(command -v cl.exe || true)"
+          [ -n "$CL_BIN" ] || (echo "cl.exe not found in PATH" && exit 1)
+          CL_DIR="$(dirname "$CL_BIN")"
+          export PATH="$CL_DIR:$PATH"
+          echo "Using CL=$CL_BIN"
+          echo "Using LINK=$(command -v link.exe || true)"
           WIN_PYTHON="$(command -v python.exe || true)"
           case "$WIN_PYTHON" in
             ""|/usr/bin/*|/mingw*/*)
