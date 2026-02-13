@@ -151,7 +151,11 @@ if [ "$(echo "$MAKE_VERSION < 4.0" | bc 2>/dev/null)" = "1" ]; then
     echo "On macOS: brew install make"
     exit 1
 fi
-make -j"$NPROC"
+if [ "$PLATFORM" = "windows" ]; then
+    MSYSTEM= WSL= make -j"$NPROC"
+else
+    make -j"$NPROC"
+fi
 echo ""
 
 # -----------------------------------------------------------
