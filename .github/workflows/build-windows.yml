@@ -108,6 +108,26 @@ jobs:
           export OUTPUT_DIR=/d/a/${{ github.event.repository.name }}/${{ github.event.repository.name }}/output
           ./scripts/build.sh
 
+      - name: Dump ICU config.log (failure)
+        if: failure()
+        shell: msys2 {0}
+        run: |
+          ICU_LOG="/d/lo-src/workdir/UnpackedTarball/icu/source/config.log"
+          if [ -f "$ICU_LOG" ]; then
+            echo "Found $ICU_LOG"
+            tail -n 200 "$ICU_LOG"
+          else
+            echo "ICU config.log not found: $ICU_LOG"
+          fi
+
+      - name: Upload ICU config.log (failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: icu-config-log
+          path: D:\lo-src\workdir\UnpackedTarball\icu\source\config.log
+          if-no-files-found: warn
+
       - uses: actions/upload-artifact@v4
         if: success()
         with:
