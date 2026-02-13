@@ -89,6 +89,7 @@ jobs:
           [ -n "$WIN_PYTHON" ] && [ -x "$WIN_PYTHON" ] || (echo "Windows python.exe not found" && exit 1)
           export PYTHON_FOR_BUILD="$WIN_PYTHON"
           export PYTHON="$WIN_PYTHON"
+          unset UCRTVersion
           "$WIN_PYTHON" --version
           echo "Using PYTHON_FOR_BUILD=$PYTHON_FOR_BUILD"
           export NPROC=4
