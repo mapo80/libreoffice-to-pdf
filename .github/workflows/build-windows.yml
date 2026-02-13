@@ -66,6 +66,8 @@ jobs:
           PROGRAMFILESX86: C:\Program Files (x86)
           ICU_DATA_FILTER_FILE: /d/a/${{ github.event.repository.name }}/${{ github.event.repository.name }}/icu-filter.json
           PKG_CONFIG: /usr/local/bin/pkgconf-2.4.3.exe
+          PYTHON_FOR_BUILD: /usr/bin/python3
+          PYTHON: /usr/bin/python3
         run: |
           cd /d/a/${{ github.event.repository.name }}/${{ github.event.repository.name }}
           export PATH="/usr/local/bin:/mingw64/bin:$PATH"
