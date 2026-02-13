@@ -85,7 +85,18 @@ if [ -n "${PKG_CONFIG:-}" ]; then
     echo "    Using PKG_CONFIG=$PKG_CONFIG"
     AUTOGEN_ARGS=("PKG_CONFIG=$PKG_CONFIG" "${AUTOGEN_ARGS[@]}")
 fi
-./autogen.sh "${AUTOGEN_ARGS[@]}"
+if [ "$PLATFORM" = "windows" ]; then
+    VISUAL_STUDIO_YEAR="${SLIMLO_VISUAL_STUDIO_YEAR:-2022}"
+    WIN_PROGRAMFILES_X86="${WIN_PROGRAMFILES_X86:-C:/Program Files (x86)}"
+    echo "    Forcing Visual Studio year: $VISUAL_STUDIO_YEAR"
+    echo "    Forcing ProgramFiles(x86) for configure: $WIN_PROGRAMFILES_X86"
+    AUTOGEN_ARGS+=("--with-visual-studio=$VISUAL_STUDIO_YEAR")
+    env "ProgramFiles(x86)=$WIN_PROGRAMFILES_X86" \
+        "PROGRAMFILESX86=$WIN_PROGRAMFILES_X86" \
+        ./autogen.sh "${AUTOGEN_ARGS[@]}"
+else
+    ./autogen.sh "${AUTOGEN_ARGS[@]}"
+fi
 echo ""
 
 # -----------------------------------------------------------
