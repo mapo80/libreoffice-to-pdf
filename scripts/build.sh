@@ -115,6 +115,25 @@ if [ -n "${PKG_CONFIG:-}" ]; then
     AUTOGEN_ARGS=("PKG_CONFIG=$PKG_CONFIG" "${AUTOGEN_ARGS[@]}")
 fi
 PYTHON_BUILD_BIN="${PYTHON_FOR_BUILD:-${PYTHON:-}}"
+if [ "$PLATFORM" = "windows" ]; then
+    case "${PYTHON_BUILD_BIN:-}" in
+        ""|/usr/bin/*|/mingw*/*)
+            WIN_PYTHON="$(command -v python.exe 2>/dev/null || true)"
+            case "$WIN_PYTHON" in
+                ""|/usr/bin/*|/mingw*/*)
+                    for candidate in /c/hostedtoolcache/windows/Python/*/x64/python.exe /c/Python*/python.exe; do
+                        [ -x "$candidate" ] || continue
+                        WIN_PYTHON="$candidate"
+                        break
+                    done
+                    ;;
+            esac
+            if [ -n "$WIN_PYTHON" ] && [ -x "$WIN_PYTHON" ]; then
+                PYTHON_BUILD_BIN="$WIN_PYTHON"
+            fi
+            ;;
+    esac
+fi
 if [ -z "$PYTHON_BUILD_BIN" ] && command -v python >/dev/null 2>&1; then
     PYTHON_BUILD_BIN="$(command -v python)"
 fi

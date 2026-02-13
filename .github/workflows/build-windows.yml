@@ -34,7 +34,6 @@ jobs:
           pacman -S --noconfirm mingw-w64-x86_64-pkgconf
           mkdir -p /usr/local/bin
           ln -sf /usr/bin/cygpath /usr/local/bin/wslpath
-          ln -sf /usr/bin/python3 /usr/local/bin/python
           cat >/usr/local/bin/pkgconf-2.4.3.exe <<'EOF'
           #!/usr/bin/env bash
           export PATH="/mingw64/bin:$PATH"
@@ -48,8 +47,8 @@ jobs:
           pkgconf-2.4.3.exe --atleast-pkgconfig-version 0.9.0
           pkg-config --version
           wslpath -u D:/lo-src
-          python --version
           python3 --version
+          command -v python.exe || true
 
       - run: choco install nasm -y
         shell: pwsh
@@ -68,8 +67,6 @@ jobs:
           PROGRAMFILESX86: C:\Program Files (x86)
           ICU_DATA_FILTER_FILE: /d/a/${{ github.event.repository.name }}/${{ github.event.repository.name }}/icu-filter.json
           PKG_CONFIG: /usr/local/bin/pkgconf-2.4.3.exe
-          PYTHON_FOR_BUILD: /usr/bin/python3
-          PYTHON: /usr/bin/python3
         run: |
           cd /d/a/${{ github.event.repository.name }}/${{ github.event.repository.name }}
           export PATH="/usr/local/bin:/mingw64/bin:$PATH"
@@ -78,6 +75,21 @@ jobs:
           vswhere="/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe"
           VS_INSTALL="$("$vswhere" -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | head -1)"
           test -n "$VS_INSTALL" && echo "VC tools install: $VS_INSTALL" || (echo "No VC.Tools.x86.x64 installation found" && exit 1)
+          WIN_PYTHON="$(command -v python.exe || true)"
+          case "$WIN_PYTHON" in
+            ""|/usr/bin/*|/mingw*/*)
+              for candidate in /c/hostedtoolcache/windows/Python/*/x64/python.exe /c/Python*/python.exe; do
+                [ -x "$candidate" ] || continue
+                WIN_PYTHON="$candidate"
+                break
+              done
+              ;;
+          esac
+          [ -n "$WIN_PYTHON" ] && [ -x "$WIN_PYTHON" ] || (echo "Windows python.exe not found" && exit 1)
+          export PYTHON_FOR_BUILD="$WIN_PYTHON"
+          export PYTHON="$WIN_PYTHON"
+          "$WIN_PYTHON" --version
+          echo "Using PYTHON_FOR_BUILD=$PYTHON_FOR_BUILD"
           export NPROC=4
           export LO_SRC_DIR=/d/lo-src
           export OUTPUT_DIR=/d/a/${{ github.event.repository.name }}/${{ github.event.repository.name }}/output
