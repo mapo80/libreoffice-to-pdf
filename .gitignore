@@ -11,6 +11,14 @@ slimlo-api/build-*/
 # .NET build artifacts
 dotnet/**/bin/
 dotnet/**/obj/
+dotnet/nupkgs/
+
+# Example app build output
+example/bin/
+example/obj/
+example/publish/
+example/test-input.docx
+example/test-output.pdf
 
 # Docker build context
 .docker-cache/

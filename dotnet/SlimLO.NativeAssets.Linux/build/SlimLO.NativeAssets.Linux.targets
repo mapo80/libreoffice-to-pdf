@@ -1,0 +1,47 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <PropertyGroup>
+    <_SlimLORid_Linux Condition="'$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</_SlimLORid_Linux>
+    <_SlimLORid_Linux Condition="'$(_SlimLORid_Linux)' == ''">$(NETCoreSdkRuntimeIdentifier)</_SlimLORid_Linux>
+    <_SlimLORoot_Linux>$(MSBuildThisFileDirectory)../runtimes/$(_SlimLORid_Linux)/native/</_SlimLORoot_Linux>
+  </PropertyGroup>
+
+  <Target Name="_CopySlimLOAssets_Linux" AfterTargets="Build"
+          Condition="Exists('$(_SlimLORoot_Linux)program')">
+    <ItemGroup>
+      <_SlimLOProg_Linux Include="$(_SlimLORoot_Linux)program/**" />
+      <_SlimLOShare_Linux Include="$(_SlimLORoot_Linux)share/**" />
+      <_SlimLOPresets_Linux Include="$(_SlimLORoot_Linux)presets/**" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_SlimLOProg_Linux)"
+          DestinationFiles="@(_SlimLOProg_Linux->'$(OutDir)program/%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_SlimLOShare_Linux)"
+          DestinationFiles="@(_SlimLOShare_Linux->'$(OutDir)share/%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" Condition="'@(_SlimLOShare_Linux)' != ''" />
+    <Copy SourceFiles="@(_SlimLOPresets_Linux)"
+          DestinationFiles="@(_SlimLOPresets_Linux->'$(OutDir)presets/%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" Condition="'@(_SlimLOPresets_Linux)' != ''" />
+    <MakeDir Directories="$(OutDir)presets" />
+  </Target>
+
+  <Target Name="_PublishSlimLOAssets_Linux" AfterTargets="Publish"
+          Condition="Exists('$(_SlimLORoot_Linux)program')">
+    <ItemGroup>
+      <_SlimLOProgPub_Linux Include="$(_SlimLORoot_Linux)program/**" />
+      <_SlimLOSharePub_Linux Include="$(_SlimLORoot_Linux)share/**" />
+      <_SlimLOPresetsPub_Linux Include="$(_SlimLORoot_Linux)presets/**" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_SlimLOProgPub_Linux)"
+          DestinationFiles="@(_SlimLOProgPub_Linux->'$(PublishDir)program/%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_SlimLOSharePub_Linux)"
+          DestinationFiles="@(_SlimLOSharePub_Linux->'$(PublishDir)share/%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" Condition="'@(_SlimLOSharePub_Linux)' != ''" />
+    <Copy SourceFiles="@(_SlimLOPresetsPub_Linux)"
+          DestinationFiles="@(_SlimLOPresetsPub_Linux->'$(PublishDir)presets/%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" Condition="'@(_SlimLOPresetsPub_Linux)' != ''" />
+    <MakeDir Directories="$(PublishDir)presets" />
+  </Target>
+
+</Project>

@@ -554,7 +554,7 @@ Full LibreOffice `instdir/` is **~1.5 GB**. SlimLO reduces it in three stages:
 - [x] GitHub Actions: macOS x64 build (`build-macos-x64.yml`)
 - [x] GitHub Actions: Windows x64 build (`build-windows.yml`)
 - [ ] Multi-arch Docker image publishing
-- [ ] NuGet package generation and publishing
+- [ ] NuGet package publishing to nuget.org
 
 ### .NET SDK
 
@@ -566,7 +566,9 @@ Full LibreOffice `instdir/` is **~1.5 GB**. SlimLO reduces it in three stages:
 - [x] PDF/A, tagged PDF, page range, password options
 - [x] Cross-platform custom font loading (SAL_FONTPATH + CoreText on macOS)
 - [x] 109 unit + integration tests
-- [ ] NuGet package generation and publishing
+- [x] NuGet packaging: `SlimLO` (managed) + `SlimLO.NativeAssets.Linux` + `SlimLO.NativeAssets.macOS`
+- [ ] NuGet packaging: `SlimLO.NativeAssets.Win32`
+- [ ] NuGet package publishing to nuget.org
 
 ### Quality
 
@@ -627,7 +629,8 @@ Full LibreOffice `instdir/` is **~1.5 GB**. SlimLO reduces it in three stages:
 │   │       ├── Protocol.cs             # Length-prefixed JSON framing
 │   │       ├── StderrDiagnosticParser.cs  # Parse font/layout warnings
 │   │       └── WorkerLocator.cs        # Auto-detect worker + resource paths
-│   ├── SlimLO.Native/                  # Per-platform native NuGet package
+│   ├── SlimLO.NativeAssets.Linux/       # Native NuGet package (linux-x64 + linux-arm64)
+│   ├── SlimLO.NativeAssets.macOS/       # Native NuGet package (osx-arm64 + osx-x64)
 │   └── SlimLO.Tests/                   # 109 xUnit tests (unit + integration)
 └── tests/
     ├── test.sh                         # Cross-platform integration test (native + Docker)
