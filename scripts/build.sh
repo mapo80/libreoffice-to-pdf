@@ -17,6 +17,15 @@ case "$(uname -s)" in
     *)                    PLATFORM="linux" ;;
 esac
 
+# LibreOffice gbuild enables a WSL path-conversion branch when MSYSTEM is set.
+# In GitHub Actions MSYS2 this causes broken "/..." source paths and
+# "wslpath: No such file or directory" during make.
+if [ "$PLATFORM" = "windows" ] && [ -n "${MSYSTEM:-}" ]; then
+    echo "Detected MSYSTEM=$MSYSTEM, unsetting for LibreOffice gbuild compatibility"
+    unset MSYSTEM
+    unset WSL
+fi
+
 # macOS: Ensure Homebrew tools take precedence over system ones.
 # LO requires GNU Make >= 4.0 (macOS ships 3.81) and gperf >= 3.1 (macOS ships 3.0.3).
 if [ "$PLATFORM" = "macos" ]; then
