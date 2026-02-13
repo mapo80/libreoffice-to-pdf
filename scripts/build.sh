@@ -26,6 +26,14 @@ if [ "$PLATFORM" = "windows" ] && [ -n "${MSYSTEM:-}" ]; then
     unset WSL
 fi
 
+# MSBuild on Windows treats environment-variable names case-insensitively.
+# Having both UCRTVERSION (from LibreOffice configure) and UCRTVersion
+# (from VS devcmd) can trigger an internal dictionary key collision.
+if [ "$PLATFORM" = "windows" ] && [ -n "${UCRTVersion:-}" ]; then
+    echo "Unsetting UCRTVersion to avoid MSBuild env collision with UCRTVERSION"
+    unset UCRTVersion
+fi
+
 if [ "$PLATFORM" = "windows" ] && ! command -v wslpath >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; then
     SHIM_DIR="$PROJECT_DIR/.slimlo-tools"
     mkdir -p "$SHIM_DIR"
