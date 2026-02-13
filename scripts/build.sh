@@ -154,6 +154,19 @@ if [ -n "$PYTHON_BUILD_BIN" ]; then
     export PYTHON="${PYTHON:-$PYTHON_BUILD_BIN}"
 fi
 if [ "$PLATFORM" = "windows" ]; then
+    NASM_BIN="${NASM:-}"
+    if [ -z "$NASM_BIN" ]; then
+        NASM_BIN="$(command -v nasm 2>/dev/null || command -v nasm.exe 2>/dev/null || true)"
+    fi
+    if [ -z "$NASM_BIN" ]; then
+        echo "ERROR: nasm not found. Install it and ensure it is available in PATH."
+        exit 1
+    fi
+    export NASM="$NASM_BIN"
+    echo "    Using NASM=$NASM"
+    "$NASM" -v || true
+fi
+if [ "$PLATFORM" = "windows" ]; then
     VISUAL_STUDIO_YEAR="${SLIMLO_VISUAL_STUDIO_YEAR:-2022}"
     WIN_PROGRAMFILES_X86="${WIN_PROGRAMFILES_X86:-C:/Program Files (x86)}"
     echo "    Forcing Visual Studio year: $VISUAL_STUDIO_YEAR"

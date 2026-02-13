@@ -31,7 +31,7 @@ jobs:
         shell: msys2 {0}
         run: |
           # LO (build_os=cygwin) expects a working pkgconf-2.4.3.exe
-          pacman -S --noconfirm mingw-w64-x86_64-pkgconf
+          pacman -S --noconfirm mingw-w64-x86_64-pkgconf mingw-w64-x86_64-nasm
           mkdir -p /usr/local/bin
           ln -sf /usr/bin/cygpath /usr/local/bin/wslpath
           cat >/usr/local/bin/pkgconf-2.4.3.exe <<'EOF'
@@ -46,12 +46,11 @@ jobs:
           pkgconf-2.4.3.exe --version
           pkgconf-2.4.3.exe --atleast-pkgconfig-version 0.9.0
           pkg-config --version
+          command -v nasm
+          nasm -v
           wslpath -u D:/lo-src
           python3 --version
           command -v python.exe || true
-
-      - run: choco install nasm -y
-        shell: pwsh
 
       - uses: actions/cache@v4
         with:
@@ -71,6 +70,11 @@ jobs:
         run: |
           cd /d/a/${{ github.event.repository.name }}/${{ github.event.repository.name }}
           export PATH="/usr/local/bin:/mingw64/bin:$PATH"
+          NASM_BIN="$(command -v nasm || command -v nasm.exe || true)"
+          [ -n "$NASM_BIN" ] || (echo "nasm not found in PATH" && exit 1)
+          export NASM="$NASM_BIN"
+          echo "Using NASM=$NASM"
+          "$NASM" -v
           perl -e 'print "ProgramFiles(x86)=$ENV{\"ProgramFiles(x86)\"}\n"'
           test -f "/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe" && echo "vswhere found" || (echo "vswhere missing" && exit 1)
           vswhere="/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe"
