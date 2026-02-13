@@ -32,6 +32,7 @@ jobs:
         run: |
           # LO (build_os=cygwin) expects a working pkgconf-2.4.3.exe
           pacman -S --noconfirm mingw-w64-x86_64-pkgconf mingw-w64-x86_64-nasm
+          export PATH="/usr/local/bin:/mingw64/bin:$PATH"
           mkdir -p /usr/local/bin
           ln -sf /usr/bin/cygpath /usr/local/bin/wslpath
           cat >/usr/local/bin/pkgconf-2.4.3.exe <<'EOF'
@@ -46,8 +47,8 @@ jobs:
           pkgconf-2.4.3.exe --version
           pkgconf-2.4.3.exe --atleast-pkgconfig-version 0.9.0
           pkg-config --version
-          command -v nasm
-          nasm -v
+          command -v nasm || command -v nasm.exe
+          (nasm -v || nasm.exe -v)
           wslpath -u D:/lo-src
           python3 --version
           command -v python.exe || true
