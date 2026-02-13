@@ -31,6 +31,7 @@ jobs:
         run: |
           # LO (build_os=cygwin) expects a working pkgconf-2.4.3.exe
           pacman -S --noconfirm mingw-w64-x86_64-pkgconf
+          mkdir -p /usr/local/bin
           cat >/usr/local/bin/pkgconf-2.4.3.exe <<'EOF'
           #!/usr/bin/env bash
           export PATH="/mingw64/bin:$PATH"
