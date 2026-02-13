@@ -97,4 +97,16 @@ wrap_exclude ENABLE_SLIMLO icg
 wrap_exclude ENABLE_SLIMLO xsltdlg
 wrap_exclude ENABLE_SLIMLO xsltfilter
 
+# ENABLE_SLIMLO: embedserv module is stripped by patch 002,
+# so emser must not stay in the merged list on Windows.
+if grep -q 'ENABLE_SLIMLO.*emser' "$MERGED"; then
+    echo "    emser already patched (skipping)"
+elif grep -q '\$(if $(filter WNT,$(OS)),emser)' "$MERGED"; then
+    sed 's/$(if $(filter WNT,$(OS)),emser)/$(if $(ENABLE_SLIMLO),,$(if $(filter WNT,$(OS)),emser))/' \
+        "$MERGED" > "$MERGED.tmp" && mv "$MERGED.tmp" "$MERGED"
+    echo "    Wrapped: emser (exclude when ENABLE_SLIMLO)"
+else
+    wrap_exclude ENABLE_SLIMLO emser
+fi
+
 echo "    Patch 006 complete"
