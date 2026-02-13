@@ -86,6 +86,16 @@ if [ -n "${PKG_CONFIG:-}" ]; then
     echo "    Using PKG_CONFIG=$PKG_CONFIG"
     AUTOGEN_ARGS=("PKG_CONFIG=$PKG_CONFIG" "${AUTOGEN_ARGS[@]}")
 fi
+if [ -n "${PYTHON:-}" ]; then
+    echo "    Using PYTHON=$PYTHON"
+    AUTOGEN_ARGS=("PYTHON=$PYTHON" "${AUTOGEN_ARGS[@]}")
+elif command -v python >/dev/null 2>&1; then
+    AUTOGEN_ARGS=("PYTHON=$(command -v python)" "${AUTOGEN_ARGS[@]}")
+elif command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN="$(command -v python3)"
+    echo "    Using PYTHON=$PYTHON_BIN"
+    AUTOGEN_ARGS=("PYTHON=$PYTHON_BIN" "${AUTOGEN_ARGS[@]}")
+fi
 if [ "$PLATFORM" = "windows" ]; then
     VISUAL_STUDIO_YEAR="${SLIMLO_VISUAL_STUDIO_YEAR:-2022}"
     WIN_PROGRAMFILES_X86="${WIN_PROGRAMFILES_X86:-C:/Program Files (x86)}"
