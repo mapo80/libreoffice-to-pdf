@@ -2,9 +2,9 @@
 
 Minimal LibreOffice build for OOXML-to-PDF conversion, with C and .NET APIs.
 
-SlimLO is **not a fork**. It applies idempotent patch scripts to vanilla LibreOffice source, making it trivial to track upstream releases. The result is a single merged library (~98 MB stripped, LTO-optimized) plus a thin C wrapper, packaged as a **186 MB** self-contained artifact.
+SlimLO is **not a fork**. It applies idempotent patch scripts to vanilla LibreOffice source, making it trivial to track upstream releases. The result is a single merged library (~98 MB stripped, LTO-optimized) plus a thin C wrapper, packaged as a **186 MB** (Linux) / **108 MB** (macOS) self-contained artifact.
 
-**Supported platforms:** Linux x64/arm64, macOS arm64, Windows x64.
+**Supported platforms:** Linux x64/arm64, macOS arm64/x64, Windows x64.
 
 ## Architecture
 
@@ -91,8 +91,8 @@ brew install autoconf automake libtool pkg-config ccache \
 
 #### Windows prerequisites
 
-Build requires Cygwin (bash/make/autoconf) + MSVC (cl.exe). The GitHub Actions workflow uses:
-- `egor-tensin/setup-cygwin@v4` for Cygwin + build tools
+Build requires MSYS2 (bash/make/autoconf) + MSVC (cl.exe). The GitHub Actions workflow uses:
+- `msys2/setup-msys2@v2` with MSYS subsystem for POSIX tools
 - `ilammy/msvc-dev-cmd@v1` for MSVC environment
 - `choco install nasm` for NASM assembler
 
@@ -202,7 +202,7 @@ using SlimLO;
 await using var converter = PdfConverter.Create(new PdfConverterOptions
 {
     ResourcePath = "/opt/slimlo",             // auto-detected if not set
-    FontDirectories = ["/app/fonts"],         // extra font directories (SAL_FONTPATH)
+    FontDirectories = ["/app/fonts"],         // extra font directories (cross-platform)
     MaxWorkers = 2,                           // parallel worker processes
     MaxConversionsPerWorker = 100,            // recycle after N conversions
     ConversionTimeout = TimeSpan.FromMinutes(5),
@@ -294,7 +294,7 @@ var result2 = await converter.ConvertAsync("input.docx", "output.pdf",
 | Property | Default | Description |
 |----------|---------|-------------|
 | `ResourcePath` | auto-detect | Path to SlimLO resources (containing `program/`). |
-| `FontDirectories` | `null` | Extra font directories (set via `SAL_FONTPATH`). |
+| `FontDirectories` | `null` | Extra font directories. On Linux, set via `SAL_FONTPATH` (fontconfig). On macOS, registered via CoreText at process level (no admin required). |
 | `MaxWorkers` | 1 | Number of parallel worker processes. |
 | `MaxConversionsPerWorker` | 0 (no limit) | Recycle worker after N conversions. |
 | `ConversionTimeout` | 5 min | Per-conversion timeout. Worker killed on timeout. |
@@ -336,11 +336,12 @@ SLIMLO_WORKER_PATH=../slimlo-api/build/slimlo_worker \
 dotnet test --collect:"XPlat Code Coverage"
 ```
 
-**Test suite:** 107 tests (unit + integration), covering:
+**Test suite:** 109 tests (unit + integration), covering:
 - All public types (`ConversionResult`, `ConversionDiagnostic`, `ConversionOptions`, enums, exceptions)
 - IPC protocol (message framing, serialization, edge cases)
 - Diagnostic parsing (all severity/category combinations, malformed input)
-- End-to-end conversion with 5 complex DOCX fixtures (multi-font, Unicode, rich formatting, large documents, missing fonts)
+- End-to-end conversion with 7 DOCX fixtures (multi-font, Unicode, rich formatting, large documents, missing fonts, barcode font with/without custom `FontDirectories`)
+- Custom font loading via `FontDirectories` (cross-platform: SAL_FONTPATH on Linux, CoreText on macOS)
 - Concurrent conversions, dispose behavior, error handling
 
 ## Build pipeline
@@ -397,10 +398,13 @@ The Docker build is fully reproducible and uses aggressive caching:
 
 | Workflow | Runner | Config | Notes |
 |----------|--------|--------|-------|
+| `build-linux-x64.yml` | `ubuntu-latest` | `SlimLO.conf` | Docker Buildx, GHA cache, 12h timeout |
+| `build-linux-arm64.yml` | `ubuntu-24.04-arm` | `SlimLO.conf` | Docker Buildx, NPROC=4, GHA cache, 12h timeout |
 | `build-macos.yml` | `macos-14` (M1) | `SlimLO-macOS.conf` | Homebrew deps, ccache, 12h timeout |
-| `build-windows.yml` | `windows-latest` | `SlimLO.conf` | Cygwin + MSVC, NPROC=4, 12h timeout |
+| `build-macos-x64.yml` | `macos-15-intel` | `SlimLO-macOS.conf` | Homebrew deps, ccache, 12h timeout |
+| `build-windows.yml` | `windows-2022` | `SlimLO.conf` | MSYS2 + MSVC, NPROC=4, 12h timeout |
 
-Both workflows cache ccache and upload artifacts. Triggered on push to `main` (excluding `.md` and `dotnet/`).
+All workflows cache build outputs (ccache or Docker layer cache) and upload artifacts. Triggered on `pull_request` to `main` and `workflow_dispatch` only (not on push).
 
 ## How patching works
 
@@ -464,6 +468,18 @@ The output directory always normalizes to `program/` and `share/` for consistenc
 - **C API wrapper** (`slimlo-api/`): On macOS, `LibreOfficeKitInit.h` has `#error "not supported on macOS"`. The CMake build bypasses this with a shim header (`lokit_macos_shim.h`) that overrides `TARGET_OS_IPHONE`/`TARGET_OS_OSX` macros.
 - **`extract-artifacts.sh`**: External library names differ on macOS (e.g., `libmwaw-0.3.3.dylib` vs `libmwaw-0.3-lo.so`). Glob patterns (`libmwaw-0.3*`) match both naming conventions.
 
+### Custom font loading
+
+`PdfConverterOptions.FontDirectories` provides cross-platform custom font support:
+
+| Platform | Mechanism | Details |
+|----------|-----------|---------|
+| Linux | `SAL_FONTPATH` | Fontconfig discovers fonts in the specified directories. |
+| macOS | `SAL_FONTPATH` + CoreText | `SAL_FONTPATH` is set but ignored by the macOS Quartz VCL backend. The worker calls `CTFontManagerRegisterFontsForURL` for each `.ttf`/`.otf`/`.ttc` file, registering fonts at process scope. No admin privileges required. |
+| Windows | `SAL_FONTPATH` | LibreOffice discovers fonts in the specified directories. |
+
+Implemented in `slimlo_worker.c` (`register_fonts_coretext()` on macOS), linked via `-framework CoreText -framework CoreFoundation` in `CMakeLists.txt`.
+
 ## Size reduction journey
 
 Full LibreOffice `instdir/` is **~1.5 GB**. SlimLO reduces it in three stages:
@@ -500,19 +516,19 @@ Full LibreOffice `instdir/` is **~1.5 GB**. SlimLO reduces it in three stages:
 
 ## Current status
 
-| Metric | Linux arm64 | macOS arm64 |
-|--------|-------------|-------------|
-| Artifact size | **186 MB** | **108 MB** |
-| Merged lib | 98 MB `.so` | 91 MB `.dylib` |
-| Libraries | 137 | 140 |
-| Constructor symbols | 557 | 560 |
-| Zip size | 70 MB | 40 MB |
+| Metric | Linux x64 | Linux arm64 | macOS arm64 | macOS x64 |
+|--------|-----------|-------------|-------------|-----------|
+| Artifact size | **186 MB** | **186 MB** | **108 MB** | **108 MB** |
+| Merged lib | 98 MB `.so` | 98 MB `.so` | 91 MB `.dylib` | 91 MB `.dylib` |
+| Libraries | 137 | 137 | 140 | 140 |
+| Constructor symbols | 557 | 557 | 560 | 560 |
+| Zip size | 70 MB | 70 MB | 40 MB | 40 MB |
 
 | | |
 |---|---|
 | LO version | `libreoffice-25.8.5.1` |
 | Test result | `test.docx` (1,754 B) → valid PDF (26 KB) |
-| .NET SDK | 107 tests passing (unit + integration) |
+| .NET SDK | 109 tests passing (unit + integration) |
 | .NET coverage | 80.5% line (100% on public API types) |
 
 ## Roadmap
@@ -524,16 +540,19 @@ Full LibreOffice `instdir/` is **~1.5 GB**. SlimLO reduces it in three stages:
 
 ### Multi-platform
 
-- [ ] True linux-x64 build (Dockerfile currently builds for host arch)
-- [ ] linux-arm64 dedicated Dockerfile
-- [x] macOS native build (distro config, patch portability, `build.sh` support)
-- [x] Windows build support (`build.sh` + `extract-artifacts.sh` Cygwin/MSVC support)
+- [x] True linux-x64 build (`build-linux-x64.yml` on ubuntu-latest)
+- [x] linux-arm64 dedicated build (`build-linux-arm64.yml` on ubuntu-24.04-arm)
+- [x] macOS arm64 native build (distro config, patch portability, `build.sh` support)
+- [x] macOS x64 build (`build-macos-x64.yml` on macos-15-intel)
+- [x] Windows build support (`build.sh` + `extract-artifacts.sh` MSYS2/MSVC support)
 
 ### CI/CD
 
+- [x] GitHub Actions: Linux x64 Docker build (`build-linux-x64.yml`)
+- [x] GitHub Actions: Linux arm64 Docker build (`build-linux-arm64.yml`)
 - [x] GitHub Actions: macOS arm64 build (`build-macos.yml`)
+- [x] GitHub Actions: macOS x64 build (`build-macos-x64.yml`)
 - [x] GitHub Actions: Windows x64 build (`build-windows.yml`)
-- [ ] GitHub Actions: Linux Docker build + integration test
 - [ ] Multi-arch Docker image publishing
 - [ ] NuGet package generation and publishing
 
@@ -545,7 +564,8 @@ Full LibreOffice `instdir/` is **~1.5 GB**. SlimLO reduces it in three stages:
 - [x] Async API with ConversionResult pattern (no exceptions for conversion failures)
 - [x] Buffer and file conversion overloads
 - [x] PDF/A, tagged PDF, page range, password options
-- [x] 107 unit + integration tests
+- [x] Cross-platform custom font loading (SAL_FONTPATH + CoreText on macOS)
+- [x] 109 unit + integration tests
 - [ ] NuGet package generation and publishing
 
 ### Quality
@@ -566,7 +586,10 @@ Full LibreOffice `instdir/` is **~1.5 GB**. SlimLO reduces it in three stages:
 ├── docker/
 │   └── Dockerfile.linux-x64            # Multi-stage: deps → builder → runtime → extractor
 ├── .github/workflows/
+│   ├── build-linux-x64.yml             # GitHub Actions: Linux x64 Docker build
+│   ├── build-linux-arm64.yml           # GitHub Actions: Linux arm64 Docker build
 │   ├── build-macos.yml                 # GitHub Actions: macOS arm64 build
+│   ├── build-macos-x64.yml            # GitHub Actions: macOS x64 build
 │   └── build-windows.yml               # GitHub Actions: Windows x64 build
 ├── patches/                            # 11 idempotent .sh scripts (not .patch files)
 │   ├── 001..008-*.sh                   # Pre-autogen patches
@@ -605,13 +628,17 @@ Full LibreOffice `instdir/` is **~1.5 GB**. SlimLO reduces it in three stages:
 │   │       ├── StderrDiagnosticParser.cs  # Parse font/layout warnings
 │   │       └── WorkerLocator.cs        # Auto-detect worker + resource paths
 │   ├── SlimLO.Native/                  # Per-platform native NuGet package
-│   └── SlimLO.Tests/                   # 107 xUnit tests (unit + integration)
+│   └── SlimLO.Tests/                   # 109 xUnit tests (unit + integration)
 └── tests/
     ├── test.sh                         # Cross-platform integration test (native + Docker)
     ├── test_convert.c                  # C test program
     ├── test.docx                       # Test fixture (1,754 bytes)
     ├── generate_complex_docx.py        # Generate complex DOCX fixtures
-    └── fixtures/                       # Complex DOCX fixtures (multi-font, unicode, etc.)
+    ├── fixtures/                       # Complex DOCX fixtures (multi-font, unicode, etc.)
+    │   ├── barcode_font.docx           # Barcode font test (Libre Barcode 128)
+    │   └── fonts/
+    │       └── LibreBarcode128-Regular.ttf  # Custom font for testing FontDirectories
+    └── ...
 ```
 
 ## Runtime requirements
