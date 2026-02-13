@@ -63,6 +63,7 @@ jobs:
         shell: msys2 {0}
         env:
           CHERE_INVOKING: 1
+          MSYS: winsymlinks:native
           'ProgramFiles(x86)': C:\Program Files (x86)
           PROGRAMFILESX86: C:\Program Files (x86)
           ICU_DATA_FILTER_FILE: /d/a/${{ github.event.repository.name }}/${{ github.event.repository.name }}/icu-filter.json
