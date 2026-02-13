@@ -159,6 +159,18 @@ if [ "$PLATFORM" = "windows" ]; then
 else
     ./autogen.sh "${AUTOGEN_ARGS[@]}"
 fi
+if [ "$PLATFORM" = "windows" ] && [ -f "$LO_SRC_DIR/config_host.mk" ]; then
+    CONFIG_PYTHON="$(awk -F= '/^export PYTHON=/{print $2; exit}' "$LO_SRC_DIR/config_host.mk" || true)"
+    CONFIG_PYTHON_FOR_BUILD="$(awk -F= '/^export PYTHON_FOR_BUILD=/{print $2; exit}' "$LO_SRC_DIR/config_host.mk" || true)"
+    echo "    config_host.mk PYTHON=$CONFIG_PYTHON"
+    echo "    config_host.mk PYTHON_FOR_BUILD=$CONFIG_PYTHON_FOR_BUILD"
+    case "$CONFIG_PYTHON $CONFIG_PYTHON_FOR_BUILD" in
+        *"/usr/bin/python"*|*"/mingw"* )
+            echo "ERROR: configure selected MSYS Python; Windows python.exe is required for D:/ paths."
+            exit 1
+            ;;
+    esac
+fi
 echo ""
 
 # -----------------------------------------------------------
