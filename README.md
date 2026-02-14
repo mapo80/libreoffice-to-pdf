@@ -237,21 +237,45 @@ var result2 = await converter.ConvertAsync("input.docx", "output.pdf",
 
 ```
 .NET Application
-┌──────────────────────────────────────────────────────┐
-│  PdfConverter (public API)                           │
-│  ├─ WorkerPool (thread-safe, round-robin dispatch)   │
-│  │   ├─ WorkerProcess[0] ──stdin/stdout──> slimlo_worker
-│  │   ├─ WorkerProcess[1] ──stdin/stdout──> slimlo_worker
-│  │   └─ ...                                          │
-│  └─ StderrDiagnosticParser (font warnings)           │
-└──────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│  PdfConverter                                                   │
+│  ├─ ConvertAsync(path, path) ─── file-path JSON IPC ─────────> │
+│  ├─ ConvertAsync(bytes/stream) ─ binary buffer IPC ──────────> │
+│  │                                                              │
+│  └─ WorkerPool (thread-safe, round-robin dispatch)              │
+│      ├─ WorkerProcess[0] ──stdin/stdout──> slimlo_worker        │
+│      ├─ WorkerProcess[1] ──stdin/stdout──> slimlo_worker        │
+│      └─ ...                                                     │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 - **Process isolation**: Each `slimlo_worker` is a native C executable. LOKit runs in a separate OS process — a SIGSEGV on a corrupt document kills only the worker, not your app.
-- **IPC protocol**: Length-prefixed JSON over stdin/stdout pipes. Simple, debuggable, no shared memory.
+- **Two IPC modes**: File-path mode (JSON with paths) and buffer mode (binary frames with raw document/PDF bytes). See [Conversion modes](#conversion-modes) below.
 - **Thread safety**: With `MaxWorkers > 1`, conversions run in true parallel across separate OS processes, each with its own LOKit instance.
 - **Crash recovery**: Broken pipe detected → failure result returned → worker auto-replaced on next call.
 - **Font diagnostics**: Worker captures LOKit stderr during each conversion. Font substitution warnings are parsed into `ConversionDiagnostic` objects.
+
+### Conversion modes
+
+`PdfConverter` uses two distinct IPC modes depending on the overload you call:
+
+**File-path mode** — The `(string inputPath, string outputPath)` overload sends only file paths to the worker process. The worker reads the input file, calls LOKit with a `file://` URL, and LOKit writes the PDF to disk directly. The .NET process never loads the document or PDF bytes into memory.
+
+**Buffer mode** — All other overloads (bytes, streams, mixed) send the document as binary frames over the IPC pipe. The worker loads it via LOKit's `private:stream` (in-memory, zero disk I/O) and sends the PDF bytes back the same way.
+
+| Overload | IPC mode | Memory behavior |
+|----------|----------|-----------------|
+| `ConvertAsync(string, string, ...)` | File-path | Worker handles all I/O. Minimal .NET memory. Format auto-detected from extension. |
+| `ConvertAsync(ReadOnlyMemory<byte>, format, ...)` | Buffer | Input + PDF bytes in .NET memory. Zero disk I/O. |
+| `ConvertAsync(Stream, Stream, format, ...)` | Buffer | Input stream read into memory, PDF written to output stream. |
+| `ConvertAsync(Stream, string, format, ...)` | Buffer | Input stream read into memory, PDF written to file from returned bytes. |
+| `ConvertAsync(string, Stream, ...)` | Buffer | File read into .NET memory, PDF written to output stream. |
+
+**When to use which:**
+
+- **Batch processing, CLI tools, large files** — Use `ConvertAsync(inputPath, outputPath)`. Most memory-efficient: a 100 MB PPTX producing a 200 MB PDF only uses ~100 MB in the worker (LOKit's internal buffers), not in your .NET process.
+- **ASP.NET / web servers** — Use `ConvertAsync(stream, stream, format)` to pipe directly from the request body to the response. No temp files needed.
+- **In-memory pipelines** — Use `ConvertAsync(ReadOnlyMemory<byte>, format)` when you already have document bytes (e.g., from a database, message queue, or blob storage).
 
 ### API reference
 
@@ -260,8 +284,11 @@ var result2 = await converter.ConvertAsync("input.docx", "output.pdf",
 | Method | Description |
 |--------|-------------|
 | `Create(options?)` | Create a new converter instance. Workers start lazily (or eagerly with `WarmUp = true`). |
-| `ConvertAsync(inputPath, outputPath, options?, ct)` | Convert a file to PDF. Returns `ConversionResult`. |
-| `ConvertAsync(input, format, options?, ct)` | Convert in-memory bytes to PDF. Returns `ConversionResult<byte[]>`. |
+| `ConvertAsync(inputPath, outputPath, options?, ct)` | File→PDF via file-path IPC. Returns `ConversionResult`. |
+| `ConvertAsync(input, format, options?, ct)` | Bytes→PDF via buffer IPC. Returns `ConversionResult<byte[]>`. |
+| `ConvertAsync(input, output, format, options?, ct)` | Stream→Stream via buffer IPC. Returns `ConversionResult`. |
+| `ConvertAsync(input, outputPath, format, options?, ct)` | Stream→File via buffer IPC. Returns `ConversionResult`. |
+| `ConvertAsync(inputPath, output, options?, ct)` | File→Stream via buffer IPC. Returns `ConversionResult`. |
 | `Version` | Static property — SlimLO native library version string. |
 
 **`ConversionResult`** — Conversion outcome with diagnostics.
