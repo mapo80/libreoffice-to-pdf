@@ -40,14 +40,14 @@ fi
 # --- Step 1: Extract data SOURCE files from ICU data zip ---
 # Original pre_action extracts only data/misc/icudata.rc.
 # We change it to extract data source directories (locales, brkitr, coll, etc.)
-# but EXCLUDE build system files (Makefile.in, pkgdataMakefile.in, etc.)
+# but EXCLUDE build system files (Makefile.in, rules.mk, pkgdataMakefile.in, etc.)
 # which LO patches (icu4c-rpath.patch.1, icu4c-mkdir.patch.1) modify.
 # Then delete the pre-built .dat so ICU rebuilds from source with the filter.
 
 if grep -q 'data/misc/icudata.rc' "$UNPACK_MK"; then
     # Replace the unzip command to selectively extract data source directories
     # Use unzip -x to exclude build system files that LO patches target
-    sed 's|unzip -q -d source -o $(gb_UnpackedTarget_TARFILE_LOCATION)/$(ICU_DATA_TARBALL) data/misc/icudata.rc|unzip -q -d source -o $(gb_UnpackedTarget_TARFILE_LOCATION)/$(ICU_DATA_TARBALL) -x data/Makefile.in data/pkgdataMakefile.in data/makedata.mak data/build.xml data/BUILDRULES.py \&\& rm -f source/data/in/*.dat|' \
+    sed 's|unzip -q -d source -o $(gb_UnpackedTarget_TARFILE_LOCATION)/$(ICU_DATA_TARBALL) data/misc/icudata.rc|unzip -q -d source -o $(gb_UnpackedTarget_TARFILE_LOCATION)/$(ICU_DATA_TARBALL) -x data/Makefile.in data/rules.mk data/pkgdataMakefile.in data/makedata.mak data/build.xml data/BUILDRULES.py \&\& rm -f source/data/in/*.dat|' \
         "$UNPACK_MK" > "$UNPACK_MK.tmp" && mv "$UNPACK_MK.tmp" "$UNPACK_MK"
     # Add the SlimLO marker comment (using sed with temp file for macOS compat)
     sed '/gb_UnpackedTarball_set_pre_action,icu/{
