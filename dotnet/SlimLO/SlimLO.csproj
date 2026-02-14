@@ -10,9 +10,9 @@
     <PackageId>SlimLO</PackageId>
     <Version>0.1.0</Version>
     <Authors>SlimLO Contributors</Authors>
-    <Description>Enterprise-grade PDF conversion library for OOXML documents (docx, xlsx, pptx). Process-isolated, thread-safe, with font diagnostics. Built on LibreOffice's rendering engine.</Description>
+    <Description>Enterprise-grade PDF conversion library for DOCX documents. Process-isolated, thread-safe, with font diagnostics. Built on LibreOffice's rendering engine.</Description>
     <PackageLicenseExpression>MPL-2.0</PackageLicenseExpression>
-    <PackageTags>pdf;conversion;docx;xlsx;pptx;libreoffice</PackageTags>
+    <PackageTags>pdf;conversion;docx;libreoffice</PackageTags>
     <RepositoryType>git</RepositoryType>
   </PropertyGroup>
 

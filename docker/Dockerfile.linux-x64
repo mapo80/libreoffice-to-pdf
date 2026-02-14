@@ -75,6 +75,7 @@ RUN chmod +x scripts/*.sh patches/*.sh
 # If not provided, Docker may cache the RUN layer even when scripts change.
 ARG SCRIPTS_HASH=default
 ARG NPROC=10
+ARG DOCX_AGGRESSIVE=1
 
 # --- Clone + Patch + Configure + Build in a SINGLE RUN ---
 # All operations that use the lo-src cache mount MUST be in one RUN.
@@ -144,7 +145,7 @@ RUN --mount=type=cache,target=/build/lo-src \
     cd lo-src && make -j${NPROC} && \
     cd /build && \
     # --- Extract artifacts to non-cached path ---
-    ./scripts/extract-artifacts.sh lo-src/instdir /artifacts && \
+    DOCX_AGGRESSIVE=${DOCX_AGGRESSIVE} ./scripts/extract-artifacts.sh lo-src/instdir /artifacts && \
     # --- Build C API ---
     rm -rf slimlo-api/build && \
     cmake -S slimlo-api -B slimlo-api/build \

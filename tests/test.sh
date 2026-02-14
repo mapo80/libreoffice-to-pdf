@@ -148,7 +148,11 @@ if [ "$MODE" = "native" ]; then
 
     # Set library path as fallback (rpath should handle it, but just in case)
     case "$(uname -s)" in
-        Darwin) export DYLD_LIBRARY_PATH="$SLIMLO_DIR/program${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}" ;;
+        Darwin)
+            export DYLD_LIBRARY_PATH="$SLIMLO_DIR/program${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+            # Quartz VCL requires main-thread init on macOS when using LOKit.
+            export SAL_LOK_OPTIONS="${SAL_LOK_OPTIONS:-unipoll}"
+            ;;
         *)      export LD_LIBRARY_PATH="$SLIMLO_DIR/program${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ;;
     esac
 

@@ -4,11 +4,22 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      docx_aggressive:
+        description: "Artifact profile (1=docx-aggressive, 0=compat)"
+        required: false
+        default: "1"
+        type: choice
+        options:
+          - "1"
+          - "0"
 
 jobs:
   build:
     runs-on: macos-14
     timeout-minutes: 720
+    env:
+      DOCX_AGGRESSIVE: ${{ github.event.inputs.docx_aggressive || '1' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -30,6 +41,7 @@ jobs:
           CCACHE_DIR: ~/Library/Caches/ccache
           CCACHE_COMPRESS: "1"
           CCACHE_MAXSIZE: 8G
+          DOCX_AGGRESSIVE: ${{ env.DOCX_AGGRESSIVE }}
         run: |
           export NPROC=$(sysctl -n hw.ncpu)
           export LO_SRC_DIR=${{ runner.temp }}/lo-src

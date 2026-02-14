@@ -67,6 +67,33 @@ static void set_error(SlimLOHandle handle, const std::string& msg) {
     set_error(handle, msg.c_str());
 }
 
+static char ascii_lower(char c) {
+    return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
+}
+
+static bool equals_ignore_ascii_case(const char* a, const char* b) {
+    if (!a || !b) return false;
+    while (*a && *b) {
+        if (ascii_lower(*a) != ascii_lower(*b)) return false;
+        ++a;
+        ++b;
+    }
+    return *a == '\0' && *b == '\0';
+}
+
+static bool has_docx_extension(const char* path) {
+    if (!path || path[0] == '\0') return false;
+
+    const char* filename = path;
+    for (const char* p = path; *p; ++p) {
+        if (*p == '/' || *p == '\\') filename = p + 1;
+    }
+
+    const char* dot = strrchr(filename, '.');
+    if (!dot || dot == filename || dot[1] == '\0') return false;
+    return equals_ignore_ascii_case(dot + 1, "docx");
+}
+
 // Convert a file path to a file:// URL
 static std::string path_to_url(const char* path) {
 #ifdef _WIN32
@@ -107,8 +134,6 @@ static const char* get_pdf_filter(SlimLOFormat format) {
 static const char* get_format_string(SlimLOFormat format) {
     switch (format) {
         case SLIMLO_FORMAT_DOCX: return "docx";
-        case SLIMLO_FORMAT_XLSX: return "xlsx";
-        case SLIMLO_FORMAT_PPTX: return "pptx";
         default: return nullptr;
     }
 }
@@ -236,6 +261,14 @@ SLIMLO_API SlimLOError slimlo_convert_file(
         set_error(handle, "input_path and output_path are required");
         return SLIMLO_ERROR_INVALID_ARGUMENT;
     }
+    if (format_hint != SLIMLO_FORMAT_UNKNOWN && format_hint != SLIMLO_FORMAT_DOCX) {
+        set_error(handle, "Unsupported format_hint: only DOCX is supported");
+        return SLIMLO_ERROR_INVALID_FORMAT;
+    }
+    if (!has_docx_extension(input_path)) {
+        set_error(handle, "Unsupported input format: only .docx files are supported");
+        return SLIMLO_ERROR_INVALID_FORMAT;
+    }
 
     // Serialize — LibreOffice cannot do concurrent conversions
     std::lock_guard<std::mutex> lock(handle->convert_mutex);
@@ -303,7 +336,11 @@ SLIMLO_API SlimLOError slimlo_convert_buffer(
         return SLIMLO_ERROR_INVALID_ARGUMENT;
     }
     if (format_hint == SLIMLO_FORMAT_UNKNOWN) {
-        set_error(handle, "format_hint is required for buffer conversion");
+        set_error(handle, "format_hint is required for buffer conversion (DOCX only)");
+        return SLIMLO_ERROR_INVALID_FORMAT;
+    }
+    if (format_hint != SLIMLO_FORMAT_DOCX) {
+        set_error(handle, "Unsupported format_hint: buffer conversion supports DOCX only");
         return SLIMLO_ERROR_INVALID_FORMAT;
     }
 

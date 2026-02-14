@@ -3,6 +3,8 @@ namespace SlimLO;
 /// <summary>
 /// Document format for input files.
 /// Values match the native SlimLOFormat enum in slimlo.h.
+/// SlimLO currently supports DOCX only; Xlsx/Pptx are retained for binary compatibility
+/// and return InvalidFormat at runtime.
 /// </summary>
 public enum DocumentFormat
 {

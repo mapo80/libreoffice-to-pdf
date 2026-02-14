@@ -89,8 +89,33 @@ int main(int argc, char** argv) {
     }
     printf("  OK\n\n");
 
+    /* Validate unsupported format guards */
+    printf("[3/4] Verifying unsupported formats are rejected...\n");
+    err = slimlo_convert_file(
+        handle, input_path, output_path,
+        SLIMLO_FORMAT_XLSX, NULL
+    );
+    if (err != SLIMLO_ERROR_INVALID_FORMAT) {
+        fprintf(stderr, "FAIL: expected INVALID_FORMAT for XLSX hint, got %d (%s)\n",
+                err, slimlo_get_error_message(handle));
+        slimlo_destroy(handle);
+        return 1;
+    }
+
+    err = slimlo_convert_file(
+        handle, input_path, output_path,
+        SLIMLO_FORMAT_PPTX, NULL
+    );
+    if (err != SLIMLO_ERROR_INVALID_FORMAT) {
+        fprintf(stderr, "FAIL: expected INVALID_FORMAT for PPTX hint, got %d (%s)\n",
+                err, slimlo_get_error_message(handle));
+        slimlo_destroy(handle);
+        return 1;
+    }
+    printf("  OK\n\n");
+
     /* Validate output */
-    printf("[3/3] Validating PDF output...\n");
+    printf("[4/4] Validating PDF output...\n");
     long sz = file_size(output_path);
     if (sz <= 0) {
         fprintf(stderr, "FAIL: Output file is empty or missing\n");

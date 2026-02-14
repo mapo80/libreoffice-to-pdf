@@ -3,7 +3,7 @@ using SlimLO.Internal;
 namespace SlimLO;
 
 /// <summary>
-/// Enterprise-grade PDF converter for OOXML documents (DOCX, XLSX, PPTX).
+/// Enterprise-grade PDF converter for DOCX-to-PDF conversion.
 ///
 /// <para><b>Thread safety:</b> All methods are fully thread-safe. Multiple threads
 /// can call <see cref="ConvertAsync(string, string, ConversionOptions?, CancellationToken)"/>
@@ -29,6 +29,10 @@ namespace SlimLO;
 /// IPC pipe. LibreOffice loads via <c>private:stream</c> (pure in-memory, zero disk I/O) and
 /// returns PDF bytes the same way. Best for web servers and in-memory pipelines.</item>
 /// </list></para>
+///
+/// <para><b>Supported formats:</b> SlimLO currently supports DOCX only.
+/// <see cref="DocumentFormat.Xlsx"/> and <see cref="DocumentFormat.Pptx"/> are kept for
+/// binary compatibility but return <see cref="SlimLOErrorCode.InvalidFormat"/> at runtime.</para>
 ///
 /// <example>
 /// <code>
@@ -103,7 +107,7 @@ public sealed class PdfConverter : IAsyncDisposable, IDisposable
     /// <summary>
     /// Convert a document file to PDF.
     /// </summary>
-    /// <param name="inputPath">Path to input document (.docx, .xlsx, .pptx).</param>
+    /// <param name="inputPath">Path to input document (.docx only).</param>
     /// <param name="outputPath">Path for output PDF file.</param>
     /// <param name="options">PDF conversion options. Null for defaults.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
@@ -138,6 +142,9 @@ public sealed class PdfConverter : IAsyncDisposable, IDisposable
                 SlimLOErrorCode.FileNotFound, null);
 
         var format = DetectFormat(inputPath);
+        if (!IsSupportedFormat(format))
+            return InvalidFormatFailure(format, "file conversion");
+
         var requestId = Interlocked.Increment(ref _requestId);
 
         var request = new ConvertRequest
@@ -182,10 +189,8 @@ public sealed class PdfConverter : IAsyncDisposable, IDisposable
                 "Input data is empty",
                 SlimLOErrorCode.InvalidArgument, null);
 
-        if (format == DocumentFormat.Unknown)
-            return ConversionResult<byte[]>.Fail(
-                "Format must be specified for buffer conversion",
-                SlimLOErrorCode.InvalidFormat, null);
+        if (!IsSupportedFormat(format))
+            return InvalidFormatFailureBytes(format, "buffer conversion");
 
         return await ConvertBufferCoreAsync(input, format, options, cancellationToken)
             .ConfigureAwait(false);
@@ -223,9 +228,8 @@ public sealed class PdfConverter : IAsyncDisposable, IDisposable
         if (!output.CanWrite)
             return ConversionResult.Fail("Output stream is not writable",
                 SlimLOErrorCode.InvalidArgument, null);
-        if (format == DocumentFormat.Unknown)
-            return ConversionResult.Fail("Format must be specified for stream conversion",
-                SlimLOErrorCode.InvalidFormat, null);
+        if (!IsSupportedFormat(format))
+            return InvalidFormatFailure(format, "stream conversion");
 
         var inputBytes = await ReadStreamToMemoryAsync(input, cancellationToken).ConfigureAwait(false);
         var result = await ConvertBufferCoreAsync(inputBytes, format, options, cancellationToken)
@@ -265,9 +269,8 @@ public sealed class PdfConverter : IAsyncDisposable, IDisposable
         if (!input.CanRead)
             return ConversionResult.Fail("Input stream is not readable",
                 SlimLOErrorCode.InvalidArgument, null);
-        if (format == DocumentFormat.Unknown)
-            return ConversionResult.Fail("Format must be specified for stream conversion",
-                SlimLOErrorCode.InvalidFormat, null);
+        if (!IsSupportedFormat(format))
+            return InvalidFormatFailure(format, "stream conversion");
 
         var inputBytes = await ReadStreamToMemoryAsync(input, cancellationToken).ConfigureAwait(false);
         var result = await ConvertBufferCoreAsync(inputBytes, format, options, cancellationToken)
@@ -283,7 +286,7 @@ public sealed class PdfConverter : IAsyncDisposable, IDisposable
     /// <summary>
     /// Convert a document file to PDF, writing to an output stream.
     /// </summary>
-    /// <param name="inputPath">Path to input document (.docx, .xlsx, .pptx).</param>
+    /// <param name="inputPath">Path to input document (.docx only).</param>
     /// <param name="output">Writable stream where PDF bytes will be written.</param>
     /// <param name="options">PDF conversion options. Null for defaults.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
@@ -316,6 +319,9 @@ public sealed class PdfConverter : IAsyncDisposable, IDisposable
                 SlimLOErrorCode.FileNotFound, null);
 
         var format = DetectFormat(inputPath);
+        if (!IsSupportedFormat(format))
+            return InvalidFormatFailure(format, "file conversion");
+
         var inputBytes = await File.ReadAllBytesAsync(inputPath, cancellationToken)
             .ConfigureAwait(false);
         var result = await ConvertBufferCoreAsync(inputBytes, format, options, cancellationToken)
@@ -372,6 +378,35 @@ public sealed class PdfConverter : IAsyncDisposable, IDisposable
             ".pptx" => DocumentFormat.Pptx,
             _ => DocumentFormat.Unknown
         };
+    }
+
+    private static bool IsSupportedFormat(DocumentFormat format) =>
+        format == DocumentFormat.Docx;
+
+    private static ConversionResult InvalidFormatFailure(DocumentFormat format, string context)
+    {
+        var message = format switch
+        {
+            DocumentFormat.Unknown =>
+                $"Unsupported input format for {context}. SlimLO currently supports DOCX (.docx) only.",
+            _ =>
+                $"Unsupported format '{format}' for {context}. SlimLO currently supports DOCX (.docx) only."
+        };
+
+        return ConversionResult.Fail(message, SlimLOErrorCode.InvalidFormat, null);
+    }
+
+    private static ConversionResult<byte[]> InvalidFormatFailureBytes(DocumentFormat format, string context)
+    {
+        var message = format switch
+        {
+            DocumentFormat.Unknown =>
+                $"Format must be specified as DocumentFormat.Docx for {context}.",
+            _ =>
+                $"Unsupported format '{format}' for {context}. SlimLO currently supports DOCX (.docx) only."
+        };
+
+        return ConversionResult<byte[]>.Fail(message, SlimLOErrorCode.InvalidFormat, null);
     }
 
     /// <summary>Core buffer conversion via binary IPC (no temp files).</summary>
