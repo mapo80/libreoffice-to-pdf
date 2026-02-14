@@ -66,11 +66,13 @@ jobs:
           MSYS: winsymlinks:native
           'ProgramFiles(x86)': C:\Program Files (x86)
           PROGRAMFILESX86: C:\Program Files (x86)
-          ICU_DATA_FILTER_FILE: /d/a/${{ github.event.repository.name }}/${{ github.event.repository.name }}/icu-filter.json
           PKG_CONFIG: /usr/local/bin/pkgconf-2.4.3.exe
         run: |
           cd /d/a/${{ github.event.repository.name }}/${{ github.event.repository.name }}
           export PATH="/usr/local/bin:$PATH:/mingw64/bin"
+          [ -f "$PWD/icu-filter.json" ] || (echo "icu-filter.json not found in workspace: $PWD/icu-filter.json" && exit 1)
+          export ICU_DATA_FILTER_FILE="$(cygpath -m "$PWD/icu-filter.json")"
+          echo "Using ICU_DATA_FILTER_FILE=$ICU_DATA_FILTER_FILE"
           NASM_BIN="$(command -v nasm || command -v nasm.exe || true)"
           [ -n "$NASM_BIN" ] || (echo "nasm not found in PATH" && exit 1)
           export NASM="$NASM_BIN"
