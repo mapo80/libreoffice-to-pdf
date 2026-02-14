@@ -41,7 +41,7 @@ fi
 # Original pre_action extracts only data/misc/icudata.rc.
 # We change it to extract data source directories (locales, brkitr, coll, etc.)
 # but EXCLUDE build system files (Makefile.in, rules.mk, pkgdataMakefile.in, etc.)
-# which LO patches (icu4c-rpath.patch.1, icu4c-mkdir.patch.1) modify.
+# which LO patches modify.
 # Then delete the pre-built .dat so ICU rebuilds from source with the filter.
 
 if grep -q 'data/misc/icudata.rc' "$UNPACK_MK"; then
@@ -60,7 +60,7 @@ else
     echo "    ICU data zip extraction may already be modified"
 fi
 
-# --- Step 2: Remove no-python.patch from the patch list ---
+# --- Step 2: Remove incompatible ICU patches for data-filter mode ---
 # The no-python.patch sets PYTHON= in ICU's configure.ac, which prevents
 # the Python databuilder from running. We need it to process ICU_DATA_FILTER_FILE.
 if grep -q 'external/icu/no-python.patch' "$UNPACK_MK"; then
@@ -68,6 +68,16 @@ if grep -q 'external/icu/no-python.patch' "$UNPACK_MK"; then
     echo "    Removed no-python.patch from ICU patch list"
 else
     echo "    no-python.patch already removed (skipping)"
+fi
+
+# icu4c-mkdir.patch.1 adds a fallback dirs.timestamp rule for the prebuilt-data path.
+# With full source data extraction this overrides rules.mk and creates too few dirs
+# (missing out/tmp/locales), causing build failures.
+if grep -q 'external/icu/icu4c-mkdir.patch.1' "$UNPACK_MK"; then
+    sed '/external\/icu\/icu4c-mkdir\.patch\.1/d' "$UNPACK_MK" > "$UNPACK_MK.tmp" && mv "$UNPACK_MK.tmp" "$UNPACK_MK"
+    echo "    Removed icu4c-mkdir.patch.1 from ICU patch list (data-filter mode)"
+else
+    echo "    icu4c-mkdir.patch.1 already removed (skipping)"
 fi
 
 # Verify
@@ -83,6 +93,13 @@ if grep -q 'no-python.patch' "$UNPACK_MK"; then
     exit 1
 else
     echo "    Verified: no-python.patch removed"
+fi
+
+if grep -q 'icu4c-mkdir.patch.1' "$UNPACK_MK"; then
+    echo "    ERROR: Failed to remove icu4c-mkdir.patch.1"
+    exit 1
+else
+    echo "    Verified: icu4c-mkdir.patch.1 removed"
 fi
 
 # --- Step 3: Force ICU rebuild by removing cached workdir artifacts ---
