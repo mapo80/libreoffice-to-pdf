@@ -22,8 +22,8 @@ BEGIN { replaced=0; skip=0; }
     if ($0 ~ /^python_listify = / && replaced == 0) {
         print $0
         print "# Normalize POSIX compiler/linker paths for meson when running under Windows python"
-        print "# Convert only when path is /<drive>/... and cygpath is available."
-        print "cross_path_to_native = $(shell case \"$(1)\" in /[A-Za-z]/*) if command -v cygpath >/dev/null 2>&1; then cygpath -m \"$(1)\"; else printf \"%s\" \"$(1)\"; fi ;; *) printf \"%s\" \"$(1)\" ;; esac)"
+        print "# Convert /... paths to native Windows paths for Meson (python.exe)."
+        print "cross_path_to_native = $(if $(filter /%,$(1)),$(shell cygpath -m \"$(1)\"),$(1))"
         print "cross_cc_path := $(firstword $(gb_CC))"
         print "cross_cc_rest := $(wordlist 2,$(words $(gb_CC)),$(gb_CC))"
         print "cross_cc_native := $(call cross_path_to_native,$(cross_cc_path)) $(cross_cc_rest)"
