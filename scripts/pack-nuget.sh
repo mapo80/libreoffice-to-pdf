@@ -49,8 +49,10 @@ case "$PLATFORM" in
         ;;
 esac
 
+PLATFORM_DISPLAY=$(echo "$PLATFORM" | sed 's/linux/Linux/;s/macos/macOS/')
+
 echo ""
-echo "=== Packing SlimLO.NativeAssets.${PLATFORM^} ==="
+echo "=== Packing SlimLO.NativeAssets.$PLATFORM_DISPLAY ==="
 dotnet pack "$CSPROJ" \
     -c Release \
     -o "$NUPKG_DIR" \
