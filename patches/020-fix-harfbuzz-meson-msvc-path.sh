@@ -16,40 +16,35 @@ if [ ! -f "$TARGET" ]; then
     exit 0
 fi
 
-if grep -q 'cross_cc_path :=' "$TARGET"; then
-    echo "    HarfBuzz meson path normalization already patched (skipping)"
-    exit 0
-fi
-
 awk '
 BEGIN { replaced=0; skip=0; }
 {
     if ($0 ~ /^python_listify = / && replaced == 0) {
         print $0
         print "# Normalize POSIX compiler/linker paths for meson when running under Windows python"
+        print "# Convert only when path is /<drive>/... and cygpath is available."
+        print "cross_path_to_native = $(shell case \"$(1)\" in /[A-Za-z]/*) if command -v cygpath >/dev/null 2>&1; then cygpath -m \"$(1)\"; else printf \"%s\" \"$(1)\"; fi ;; *) printf \"%s\" \"$(1)\" ;; esac)"
         print "cross_cc_path := $(firstword $(gb_CC))"
         print "cross_cc_rest := $(wordlist 2,$(words $(gb_CC)),$(gb_CC))"
-        print "cross_c = $(call python_listify,$(if $(filter WNT,$(OS)),$(if $(filter /%,$(cross_cc_path)),$(shell cygpath -m \"$(cross_cc_path)\") $(cross_cc_rest),$(gb_CC)),$(gb_CC)))"
+        print "cross_c = $(call python_listify,$(call cross_path_to_native,$(cross_cc_path)) $(cross_cc_rest))"
         print "cross_cxx_path := $(firstword $(gb_CXX))"
         print "cross_cxx_rest := $(wordlist 2,$(words $(gb_CXX)),$(gb_CXX))"
-        print "cross_cxx = $(call python_listify,$(if $(filter WNT,$(OS)),$(if $(filter /%,$(cross_cxx_path)),$(shell cygpath -m \"$(cross_cxx_path)\") $(cross_cxx_rest),$(gb_CXX)),$(gb_CXX)))"
+        print "cross_cxx = $(call python_listify,$(call cross_path_to_native,$(cross_cxx_path)) $(cross_cxx_rest))"
         print "cross_ld_cmd := $(subst -fuse-ld=,,$(USE_LD))"
         print "cross_ld_path := $(firstword $(cross_ld_cmd))"
         print "cross_ld_rest := $(wordlist 2,$(words $(cross_ld_cmd)),$(cross_ld_cmd))"
-        print "cross_ld := $(call python_listify,$(if $(filter WNT,$(OS)),$(if $(filter /%,$(cross_ld_path)),$(shell cygpath -m \"$(cross_ld_path)\") $(cross_ld_rest),$(cross_ld_cmd)),$(cross_ld_cmd)))"
-        print "cross_ar := $(if $(filter WNT,$(OS)),$(if $(filter /%,$(AR)),$(shell cygpath -m \"$(AR)\"),$(AR)),$(AR))"
-        print "cross_strip := $(if $(filter WNT,$(OS)),$(if $(filter /%,$(STRIP)),$(shell cygpath -m \"$(STRIP)\"),$(STRIP)),$(STRIP))"
+        print "cross_ld := $(call python_listify,$(call cross_path_to_native,$(cross_ld_path)) $(cross_ld_rest))"
+        print "cross_ar := $(call cross_path_to_native,$(AR))"
+        print "cross_strip := $(call cross_path_to_native,$(STRIP))"
         replaced=1
         skip=1
         next
     }
 
     if (skip == 1) {
-        if ($0 ~ /^cross_ld := /) {
+        if ($0 ~ /^define gb_harfbuzz_cross_compile/) {
             skip=0
-            next
-        }
-        if ($0 ~ /^cross_c = / || $0 ~ /^cross_cxx = /) {
+            print $0
             next
         }
         next
