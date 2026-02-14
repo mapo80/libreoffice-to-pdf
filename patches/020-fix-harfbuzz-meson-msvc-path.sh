@@ -63,7 +63,7 @@ END {
 cat > "$TARGET.sed" <<'EOF'
 s|^ar = '$(AR)'$|ar = '$(cross_ar)'|
 s|^strip = '$(STRIP)'$|strip = '$(cross_strip)'|
-s|^\([[:space:]]*\)\$(MESON) setup builddir \\$|\1CL= _CL_= CFLAGS= CXXFLAGS= CPPFLAGS= LDFLAGS= CC="$(cross_cc_native)" CXX="$(cross_cxx_native)" $(MESON) setup builddir \\|
+s|^\([[:space:]]*\)\$(MESON) setup builddir \\$|\1env -u CL -u _CL_ -u cl -u _cl_ -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS -u cflags -u cxxflags -u cppflags -u ldflags CC="$(cross_cc_native)" CXX="$(cross_cxx_native)" $(MESON) setup builddir \\|
 EOF
 sed -f "$TARGET.sed" "$TARGET" > "$TARGET.tmp" && mv "$TARGET.tmp" "$TARGET"
 rm -f "$TARGET.sed"
