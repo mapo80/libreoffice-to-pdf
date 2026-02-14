@@ -23,18 +23,18 @@
     <NativeDir_x64 Condition="'$(NativeDir_x64)' == ''">../../output-macos-x64/</NativeDir_x64>
   </PropertyGroup>
 
-  <!-- osx-arm64 runtime assets (preserve program/ hierarchy for WorkerLocator) -->
+  <!-- osx-arm64 runtime assets (custom path to avoid SDK's native asset flattening) -->
   <ItemGroup Condition="Exists('$(NativeDir_arm64)')">
-    <Content Include="$(NativeDir_arm64)program/**" PackagePath="runtimes/osx-arm64/native/program/" />
-    <Content Include="$(NativeDir_arm64)share/**" PackagePath="runtimes/osx-arm64/native/share/" />
-    <Content Include="$(NativeDir_arm64)presets/**" PackagePath="runtimes/osx-arm64/native/presets/" />
+    <Content Include="$(NativeDir_arm64)program/**" PackagePath="slimlo/osx-arm64/program/" />
+    <Content Include="$(NativeDir_arm64)share/**" PackagePath="slimlo/osx-arm64/share/" />
+    <Content Include="$(NativeDir_arm64)presets/**" PackagePath="slimlo/osx-arm64/presets/" />
   </ItemGroup>
 
   <!-- osx-x64 runtime assets -->
   <ItemGroup Condition="Exists('$(NativeDir_x64)')">
-    <Content Include="$(NativeDir_x64)program/**" PackagePath="runtimes/osx-x64/native/program/" />
-    <Content Include="$(NativeDir_x64)share/**" PackagePath="runtimes/osx-x64/native/share/" />
-    <Content Include="$(NativeDir_x64)presets/**" PackagePath="runtimes/osx-x64/native/presets/" />
+    <Content Include="$(NativeDir_x64)program/**" PackagePath="slimlo/osx-x64/program/" />
+    <Content Include="$(NativeDir_x64)share/**" PackagePath="slimlo/osx-x64/share/" />
+    <Content Include="$(NativeDir_x64)presets/**" PackagePath="slimlo/osx-x64/presets/" />
   </ItemGroup>
 
   <!-- Ship MSBuild .targets so consumers get native files copied to output -->

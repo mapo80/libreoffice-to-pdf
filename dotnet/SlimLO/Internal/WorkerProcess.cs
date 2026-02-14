@@ -51,6 +51,23 @@ internal sealed class WorkerProcess : IAsyncDisposable
             StandardOutputEncoding = null, // binary
         };
 
+        // Ensure the worker can find libslimlo and libmergedlo in its own directory
+        var workerDir = Path.GetDirectoryName(_workerPath)!;
+        if (OperatingSystem.IsLinux())
+        {
+            var existing = Environment.GetEnvironmentVariable("LD_LIBRARY_PATH");
+            psi.Environment["LD_LIBRARY_PATH"] = string.IsNullOrEmpty(existing)
+                ? workerDir
+                : $"{workerDir}:{existing}";
+        }
+        else if (OperatingSystem.IsMacOS())
+        {
+            var existing = Environment.GetEnvironmentVariable("DYLD_LIBRARY_PATH");
+            psi.Environment["DYLD_LIBRARY_PATH"] = string.IsNullOrEmpty(existing)
+                ? workerDir
+                : $"{workerDir}:{existing}";
+        }
+
         // Set environment variables for the worker process.
         // On macOS, the SVP (headless) plugin is not available — only the Quartz
         // backend exists. On Linux/Windows, use SVP for headless operation.
@@ -102,10 +119,19 @@ internal sealed class WorkerProcess : IAsyncDisposable
         if (responseBytes is null)
         {
             var exitCode = _process.HasExited ? _process.ExitCode : -1;
-            throw new SlimLOException(
-                $"Worker process died during initialization (exit code: {exitCode}). " +
-                $"Stderr: {GetStderrOutput()}",
-                SlimLOErrorCode.InitFailed);
+            var stderr = GetStderrOutput();
+            var message = $"Worker process died during initialization (exit code: {exitCode}).";
+
+            if (stderr.Contains("error while loading shared libraries"))
+            {
+                message += " Missing system library detected. On Ubuntu/Debian, install: " +
+                    "apt-get install libfontconfig1 libfreetype6 libexpat1 libcairo2 libpng16-16 " +
+                    "libjpeg-turbo8 libxml2 libxslt1.1 libicu74 libnss3 libnspr4. " +
+                    "See https://github.com/nicobao/libreoffice-to-pdf#linux-system-dependencies for details.";
+            }
+
+            message += $" Stderr: {stderr}";
+            throw new SlimLOException(message, SlimLOErrorCode.InitFailed);
         }
 
         using var doc = Protocol.Deserialize(responseBytes);

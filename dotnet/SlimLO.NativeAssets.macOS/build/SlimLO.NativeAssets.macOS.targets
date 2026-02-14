@@ -3,7 +3,7 @@
   <PropertyGroup>
     <_SlimLORid_macOS Condition="'$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</_SlimLORid_macOS>
     <_SlimLORid_macOS Condition="'$(_SlimLORid_macOS)' == ''">$(NETCoreSdkRuntimeIdentifier)</_SlimLORid_macOS>
-    <_SlimLORoot_macOS>$(MSBuildThisFileDirectory)../runtimes/$(_SlimLORid_macOS)/native/</_SlimLORoot_macOS>
+    <_SlimLORoot_macOS>$(MSBuildThisFileDirectory)../slimlo/$(_SlimLORid_macOS)/</_SlimLORoot_macOS>
   </PropertyGroup>
 
   <Target Name="_CopySlimLOAssets_macOS" AfterTargets="Build"
