@@ -161,6 +161,18 @@ jobs:
             echo "NSS build.log not found: $NSS_BUILD_LOG"
           fi
 
+      - name: Dump HarfBuzz meson-log.txt (failure)
+        if: failure()
+        shell: msys2 {0}
+        run: |
+          HB_MESON_LOG="/d/lo-src/workdir/UnpackedTarball/harfbuzz/builddir/meson-logs/meson-log.txt"
+          if [ -f "$HB_MESON_LOG" ]; then
+            echo "Found $HB_MESON_LOG"
+            tail -n 200 "$HB_MESON_LOG"
+          else
+            echo "HarfBuzz meson-log.txt not found: $HB_MESON_LOG"
+          fi
+
       - name: Upload ICU config.log (failure)
         if: failure()
         uses: actions/upload-artifact@v4
@@ -175,6 +187,14 @@ jobs:
         with:
           name: nspr-config-log
           path: D:\lo-src\workdir\UnpackedTarball\nss\nspr\out\config.log
+          if-no-files-found: warn
+
+      - name: Upload HarfBuzz meson-log.txt (failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: harfbuzz-meson-log
+          path: D:\lo-src\workdir\UnpackedTarball\harfbuzz\builddir\meson-logs\meson-log.txt
           if-no-files-found: warn
 
       - name: Upload CI debug env (failure)
@@ -194,6 +214,7 @@ jobs:
             D:\lo-src\workdir\UnpackedTarball\nss\build.log
             D:\lo-src\workdir\ExternalProject\nss\build.log
             D:\lo-src\workdir\UnpackedTarball\icu\source\build.log
+            D:\lo-src\workdir\UnpackedTarball\harfbuzz\builddir\meson-logs\meson-log.txt
           if-no-files-found: warn
 
       - uses: actions/upload-artifact@v4
