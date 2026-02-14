@@ -177,13 +177,20 @@ jobs:
           path: D:\lo-src\workdir\UnpackedTarball\nss\nspr\out\config.log
           if-no-files-found: warn
 
-      - name: Upload build debug bundle (failure)
+      - name: Upload CI debug env (failure)
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-build-debug
+          name: windows-ci-debug-env
+          path: D:\a\${{ github.event.repository.name }}\${{ github.event.repository.name }}\.ci-debug\*
+          if-no-files-found: warn
+
+      - name: Upload external build logs (failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-external-build-logs
           path: |
-            D:\a\${{ github.event.repository.name }}\${{ github.event.repository.name }}\.ci-debug\*
             D:\lo-src\workdir\UnpackedTarball\nss\build.log
             D:\lo-src\workdir\ExternalProject\nss\build.log
             D:\lo-src\workdir\UnpackedTarball\icu\source\build.log
