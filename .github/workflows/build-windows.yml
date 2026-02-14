@@ -122,12 +122,32 @@ jobs:
             echo "ICU config.log not found: $ICU_LOG"
           fi
 
+      - name: Dump NSPR config.log (failure)
+        if: failure()
+        shell: msys2 {0}
+        run: |
+          NSPR_LOG="/d/lo-src/workdir/UnpackedTarball/nss/nspr/out/config.log"
+          if [ -f "$NSPR_LOG" ]; then
+            echo "Found $NSPR_LOG"
+            tail -n 200 "$NSPR_LOG"
+          else
+            echo "NSPR config.log not found: $NSPR_LOG"
+          fi
+
       - name: Upload ICU config.log (failure)
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: icu-config-log
           path: D:\lo-src\workdir\UnpackedTarball\icu\source\config.log
+          if-no-files-found: warn
+
+      - name: Upload NSPR config.log (failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nspr-config-log
+          path: D:\lo-src\workdir\UnpackedTarball\nss\nspr\out\config.log
           if-no-files-found: warn
 
       - uses: actions/upload-artifact@v4
