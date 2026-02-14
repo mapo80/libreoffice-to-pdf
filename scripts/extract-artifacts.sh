@@ -10,6 +10,15 @@ set -euo pipefail
 
 INSTDIR="${1:?Usage: extract-artifacts.sh <instdir> <output-dir>}"
 OUTPUT_DIR="${2:?Usage: extract-artifacts.sh <instdir> <output-dir>}"
+DOCX_AGGRESSIVE="${DOCX_AGGRESSIVE:-0}"
+
+case "$DOCX_AGGRESSIVE" in
+    0|1) ;;
+    *)
+        echo "ERROR: DOCX_AGGRESSIVE must be 0 or 1 (got '$DOCX_AGGRESSIVE')"
+        exit 1
+        ;;
+esac
 
 if [ ! -d "$INSTDIR" ]; then
     echo "ERROR: instdir not found: $INSTDIR"
@@ -17,6 +26,7 @@ if [ ! -d "$INSTDIR" ]; then
 fi
 
 echo "Extracting artifacts from $INSTDIR to $OUTPUT_DIR..."
+echo "  Profile: $([ "$DOCX_AGGRESSIVE" = "1" ] && echo "docx-aggressive" || echo "compat")"
 
 # Platform-specific folder names (macOS .app bundle uses different layout)
 case "$(uname -s)" in
@@ -35,6 +45,15 @@ case "$(uname -s)" in
         LIB_EXT="so"
         ;;
 esac
+
+remove_program_library_variants() {
+    local name="$1"
+    rm -f "$OUTPUT_DIR/program/${name}.so"
+    rm -f "$OUTPUT_DIR/program/${name}.so."*
+    rm -f "$OUTPUT_DIR/program/${name}.dylib"
+    rm -f "$OUTPUT_DIR/program/${name}.dylib."*
+    rm -f "$OUTPUT_DIR/program/${name}.dll"
+}
 
 # Clean output directory — always use program/ and share/ in output for consistency
 rm -rf "$OUTPUT_DIR"
@@ -279,6 +298,38 @@ rm -f "$OUTPUT_DIR/program/types/oovbaapi.rdb"
 rm -f "$OUTPUT_DIR/share/registry/lingucomponent.xcd"
 
 # -----------------------------------------------------------
+# 7f2. Optional DOCX aggressive runtime pruning
+#      Keep disabled by default for rollback safety (DOCX_AGGRESSIVE=0).
+# -----------------------------------------------------------
+if [ "$DOCX_AGGRESSIVE" = "1" ]; then
+    echo "  Applying DOCX aggressive pruning profile..."
+
+    # Additional runtime libraries validated for DOCX-only conversion.
+    # NOTE: libsoftokn3/libfreebl3 are intentionally kept (probe-rejected).
+    for lib in \
+        libmswordlo libcached1 libgraphicfilterlo libfps_aqualo \
+        libnssckbi libnssdbm3 libssl3 \
+        libnet_uno libmacbe1lo libintrospectionlo libinvocationlo \
+        libinvocadaptlo libreflectionlo libunsafe_uno_uno libaffine_uno_uno \
+        libbinaryurplo libbootstraplo libiolo libloglo libstoragefdlo \
+        libtllo libucbhelper libucppkg1 libsal_textenc \
+    ; do
+        remove_program_library_variants "$lib"
+    done
+
+    # UI/config modules not needed in headless DOCX-only mode.
+    for cfg in svx sfx vcl fps formula uui xmlsec; do
+        rm -rf "$OUTPUT_DIR/share/config/soffice.cfg/$cfg"
+    done
+
+    # Remove filter data and selected registry entries not needed for DOCX->PDF.
+    rm -rf "$OUTPUT_DIR/share/filter"
+    rm -f "$OUTPUT_DIR/share/registry/Langpack-en-US.xcd"
+    rm -f "$OUTPUT_DIR/share/registry/ctl.xcd"
+    rm -f "$OUTPUT_DIR/share/registry/graphicfilter.xcd"
+fi
+
+# -----------------------------------------------------------
 # 7g. Remove NEEDED-but-unused external libraries via patchelf
 #     libcurl.so.4 is NEEDED by libmergedlo.so but never called for local conversion.
 #     NOTE: librdf/libraptor2/librasqal CANNOT be removed — called at runtime.
@@ -398,6 +449,7 @@ esac
 # -----------------------------------------------------------
 echo ""
 echo "=== Artifact Summary ==="
+echo "Profile: $([ "$DOCX_AGGRESSIVE" = "1" ] && echo "docx-aggressive" || echo "compat")"
 LIB_COUNT=$(find "$OUTPUT_DIR/program" \( -name "*.so" -o -name "*.so.*" -o -name "*.dylib" -o -name "*.dylib.*" -o -name "*.dll" \) | wc -l)
 echo "Libraries: $LIB_COUNT"
 echo ""
@@ -406,3 +458,6 @@ du -sh "$OUTPUT_DIR"
 echo ""
 echo "Breakdown:"
 du -sh "$OUTPUT_DIR"/* 2>/dev/null || true
+echo ""
+echo "Largest files:"
+find "$OUTPUT_DIR/program" -type f -exec du -h {} + 2>/dev/null | sort -hr | head -20 || true

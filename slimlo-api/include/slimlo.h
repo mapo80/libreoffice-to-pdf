@@ -1,7 +1,11 @@
 /*
  * slimlo.h — SlimLO PDF Conversion Library
  *
- * Minimal C API for converting OOXML documents (docx, xlsx, pptx) to PDF.
+ * Minimal C API for converting DOCX documents to PDF.
+ *
+ * Compatibility note:
+ *   The format enum keeps XLSX/PPTX values for ABI compatibility, but runtime
+ *   conversion currently supports DOCX only. XLSX/PPTX return INVALID_FORMAT.
  * Built on top of LibreOffice's rendering engine via LibreOfficeKit.
  *
  * Thread safety: LibreOffice is single-threaded for document processing.
@@ -59,7 +63,7 @@ typedef enum {
     SLIMLO_ERROR_UNKNOWN           = 99
 } SlimLOError;
 
-/* Input format hint (auto-detected if UNKNOWN) */
+/* Input format hint (auto-detected for file conversion) */
 typedef enum {
     SLIMLO_FORMAT_UNKNOWN = 0,
     SLIMLO_FORMAT_DOCX    = 1,
@@ -107,9 +111,9 @@ SLIMLO_API void slimlo_destroy(SlimLOHandle handle);
  * Convert a document file to PDF.
  *
  * @param handle       Handle from slimlo_init().
- * @param input_path   Path to input document (.docx, .xlsx, .pptx).
+ * @param input_path   Path to input document (.docx only).
  * @param output_path  Path for output PDF file.
- * @param format_hint  Format hint (SLIMLO_FORMAT_UNKNOWN for auto-detect).
+ * @param format_hint  Format hint (SLIMLO_FORMAT_UNKNOWN or SLIMLO_FORMAT_DOCX).
  * @param options      PDF options (NULL for defaults).
  * @return SLIMLO_OK on success, error code on failure.
  */
@@ -127,7 +131,7 @@ SLIMLO_API SlimLOError slimlo_convert_file(
  * @param handle       Handle from slimlo_init().
  * @param input_data   Input document bytes.
  * @param input_size   Size of input data.
- * @param format_hint  Format hint (required for buffer conversion).
+ * @param format_hint  Format hint (required; SLIMLO_FORMAT_DOCX only).
  * @param options      PDF options (NULL for defaults).
  * @param output_data  Receives pointer to allocated PDF bytes.
  *                     Caller must free with slimlo_free_buffer().

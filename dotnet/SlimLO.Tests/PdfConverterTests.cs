@@ -1219,6 +1219,21 @@ public class PdfConverterIntegrationTests : IAsyncDisposable
         Assert.Equal(SlimLOErrorCode.InvalidFormat, result.ErrorCode);
     }
 
+    [Theory]
+    [InlineData(DocumentFormat.Xlsx)]
+    [InlineData(DocumentFormat.Pptx)]
+    public async Task ConvertAsync_BufferUnsupportedFormat_ReturnsFailure(DocumentFormat format)
+    {
+        var converter = GetOrCreateConverter();
+        if (converter is null) return;
+
+        var result = await converter.ConvertAsync(
+            new byte[] { 1, 2, 3 }, format);
+
+        Assert.False(result.Success);
+        Assert.Equal(SlimLOErrorCode.InvalidFormat, result.ErrorCode);
+    }
+
     // --- Format detection ---
 
     [Fact]
@@ -1238,6 +1253,34 @@ public class PdfConverterIntegrationTests : IAsyncDisposable
         }
         finally
         {
+            if (File.Exists(output)) File.Delete(output);
+        }
+    }
+
+    [Theory]
+    [InlineData(".xlsx")]
+    [InlineData(".pptx")]
+    public async Task ConvertAsync_FileUnsupportedExtension_ReturnsInvalidFormat(string extension)
+    {
+        var converter = GetOrCreateConverter();
+        if (converter is null) return;
+
+        var input = Path.Combine(Path.GetTempPath(), $"slimlo_{Guid.NewGuid():N}{extension}");
+        var output = Path.Combine(Path.GetTempPath(), $"slimlo_{Guid.NewGuid():N}.pdf");
+
+        try
+        {
+            await File.WriteAllBytesAsync(input, new byte[] { 1, 2, 3 });
+
+            var result = await converter.ConvertAsync(input, output);
+
+            Assert.False(result.Success);
+            Assert.Equal(SlimLOErrorCode.InvalidFormat, result.ErrorCode);
+            Assert.False(File.Exists(output));
+        }
+        finally
+        {
+            if (File.Exists(input)) File.Delete(input);
             if (File.Exists(output)) File.Delete(output);
         }
     }
@@ -1560,6 +1603,22 @@ public class PdfConverterStreamValidationTests
         Assert.Equal(SlimLOErrorCode.InvalidFormat, result.ErrorCode);
     }
 
+    [Theory]
+    [InlineData(DocumentFormat.Xlsx)]
+    [InlineData(DocumentFormat.Pptx)]
+    public async Task ConvertAsync_StreamToStream_UnsupportedFormat_ReturnsFailure(DocumentFormat format)
+    {
+        if (!TestHelpers.CanRunIntegration()) return;
+        await using var converter = PdfConverter.Create(new PdfConverterOptions
+            { ResourcePath = TestHelpers.GetResourcePath() });
+
+        var result = await converter.ConvertAsync(
+            new MemoryStream(new byte[] { 1, 2, 3 }), new MemoryStream(), format);
+
+        Assert.False(result.Success);
+        Assert.Equal(SlimLOErrorCode.InvalidFormat, result.ErrorCode);
+    }
+
     [Fact]
     public async Task ConvertAsync_StreamToStream_NonReadableInput_ReturnsFailure()
     {
@@ -1631,6 +1690,24 @@ public class PdfConverterStreamValidationTests
         Assert.Equal(SlimLOErrorCode.InvalidFormat, result.ErrorCode);
     }
 
+    [Theory]
+    [InlineData(DocumentFormat.Xlsx)]
+    [InlineData(DocumentFormat.Pptx)]
+    public async Task ConvertAsync_StreamToFile_UnsupportedFormat_ReturnsFailure(DocumentFormat format)
+    {
+        if (!TestHelpers.CanRunIntegration()) return;
+        await using var converter = PdfConverter.Create(new PdfConverterOptions
+            { ResourcePath = TestHelpers.GetResourcePath() });
+
+        var result = await converter.ConvertAsync(
+            new MemoryStream(new byte[] { 1, 2, 3 }),
+            Path.Combine(Path.GetTempPath(), $"slimlo_{Guid.NewGuid():N}.pdf"),
+            format);
+
+        Assert.False(result.Success);
+        Assert.Equal(SlimLOErrorCode.InvalidFormat, result.ErrorCode);
+    }
+
     // -- File → Stream validation --
 
     [Fact]
@@ -1667,6 +1744,30 @@ public class PdfConverterStreamValidationTests
 
         Assert.False(result.Success);
         Assert.Equal(SlimLOErrorCode.FileNotFound, result.ErrorCode);
+    }
+
+    [Theory]
+    [InlineData(".xlsx")]
+    [InlineData(".pptx")]
+    public async Task ConvertAsync_FileToStream_UnsupportedExtension_ReturnsFailure(string extension)
+    {
+        if (!TestHelpers.CanRunIntegration()) return;
+        await using var converter = PdfConverter.Create(new PdfConverterOptions
+            { ResourcePath = TestHelpers.GetResourcePath() });
+
+        var input = Path.Combine(Path.GetTempPath(), $"slimlo_{Guid.NewGuid():N}{extension}");
+        try
+        {
+            await File.WriteAllBytesAsync(input, new byte[] { 1, 2, 3 });
+            var result = await converter.ConvertAsync(input, new MemoryStream());
+
+            Assert.False(result.Success);
+            Assert.Equal(SlimLOErrorCode.InvalidFormat, result.ErrorCode);
+        }
+        finally
+        {
+            if (File.Exists(input)) File.Delete(input);
+        }
     }
 
     // -- Disposed converter --
@@ -2195,4 +2296,3 @@ public class PdfConverterStreamIntegrationTests : IAsyncDisposable
         }
     }
 }
-

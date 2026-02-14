@@ -4,11 +4,22 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      docx_aggressive:
+        description: "Artifact profile (1=docx-aggressive, 0=compat)"
+        required: false
+        default: "1"
+        type: choice
+        options:
+          - "1"
+          - "0"
 
 jobs:
   build:
     runs-on: windows-2022
     timeout-minutes: 720
+    env:
+      DOCX_AGGRESSIVE: ${{ github.event.inputs.docx_aggressive || '1' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -67,6 +78,7 @@ jobs:
           'ProgramFiles(x86)': C:\Program Files (x86)
           PROGRAMFILESX86: C:\Program Files (x86)
           PKG_CONFIG: /usr/local/bin/pkgconf-2.4.3.exe
+          DOCX_AGGRESSIVE: ${{ env.DOCX_AGGRESSIVE }}
         run: |
           cd /d/a/${{ github.event.repository.name }}/${{ github.event.repository.name }}
           mkdir -p .ci-debug

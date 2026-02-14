@@ -1,6 +1,6 @@
 # SlimLO
 
-**Minimal LibreOffice build for OOXML-to-PDF conversion, with .NET and C APIs.**
+**Minimal LibreOffice build for DOCX-to-PDF conversion, with .NET and C APIs.**
 
 [![Build Linux x64](https://github.com/mapo80/libreoffice-to-pdf/actions/workflows/build-linux-x64.yml/badge.svg)](https://github.com/mapo80/libreoffice-to-pdf/actions/workflows/build-linux-x64.yml)
 [![Build Linux arm64](https://github.com/mapo80/libreoffice-to-pdf/actions/workflows/build-linux-arm64.yml/badge.svg)](https://github.com/mapo80/libreoffice-to-pdf/actions/workflows/build-linux-arm64.yml)
@@ -13,16 +13,17 @@ SlimLO is **not a fork**. It applies idempotent patch scripts to vanilla LibreOf
 | | |
 |---|---|
 | **Platforms** | Linux x64/arm64 · macOS arm64/x64 · Windows x64 |
-| **Artifact size** | 186 MB (Linux) · 108 MB (macOS) |
-| **Merged lib** | ~98 MB `.so` · ~91 MB `.dylib` (LTO + stripped) |
+| **Artifact size (compat)** | ~144 MB (linux-x64) · ~138 MB (linux-arm64) · ~146 MB (macOS local) |
+| **Artifact size (docx-aggressive)** | ~134 MB (macOS local, `2026-02-14`) |
+| **Merged lib** | ~65 MB `.dylib` (macOS local, stripped) |
 | **LO version** | `libreoffice-25.8.5.1` |
-| **.NET tests** | 109 passing (unit + integration) |
+| **.NET tests** | 170 passing |
 
 ---
 
 ## Architecture
 
-SlimLO strips LibreOffice down to its Writer engine + UNO + filters, merges everything into a single shared library via `--enable-mergelibs` + LTO, and exposes it through two APIs:
+SlimLO strips LibreOffice down to its Writer engine + UNO + DOCX/PDF conversion path, merges everything into a single shared library via `--enable-mergelibs` + LTO, and exposes it through two APIs:
 
 ```
                         ┌─────────────────────┐
@@ -51,15 +52,15 @@ SlimLO strips LibreOffice down to its Writer engine + UNO + filters, merges ever
                                              │
                                ┌─────────────┴──────────────┐
                                │ libmergedlo.{so,dylib,dll}  │
-                               │   ~98 MB · LTO · stripped   │
+                               │   ~65 MB · LTO · stripped   │
                                │   Writer + UNO + filters    │
                                └─────────────────────────────┘
 ```
 
 **Key design decisions:**
 
-- **Patch-based, not a fork** — 11 idempotent shell scripts patch vanilla LO source. No `git .patch` files — scripts are resilient to upstream line-number changes and trivial to update when a new LO version drops.
-- **Single merged library** — `--enable-mergelibs` + LTO combines hundreds of LO modules into one `libmergedlo`. Dead code elimination + aggressive stripping reduces 1.5 GB to 186 MB.
+- **Patch-based, not a fork** — 22 patch scripts (including one post-autogen patch) modify vanilla LO source. No `git .patch` files — scripts are resilient to upstream line-number changes and easy to maintain across LO upgrades.
+- **Single merged library** — `--enable-mergelibs` + LTO combines hundreds of LO modules into one `libmergedlo`. Dead code elimination + aggressive stripping reduces 1.5 GB to ~146 MB (`compat`) or ~134 MB (`docx-aggressive`, macOS local).
 - **Process isolation** (.NET) — Each conversion runs in a separate native `slimlo_worker` process. LibreOffice crash on a malformed document kills only the worker, never the host application.
 
 ---
@@ -67,6 +68,8 @@ SlimLO strips LibreOffice down to its Writer engine + UNO + filters, merges ever
 ## .NET SDK
 
 The .NET SDK is the primary way to use SlimLO. It provides a thread-safe, async API with process isolation, crash recovery, and font diagnostics.
+
+> Supported input format is **DOCX only**. `DocumentFormat.Xlsx` / `DocumentFormat.Pptx` are kept for binary compatibility and return `InvalidFormat`.
 
 ### Installation
 
@@ -300,13 +303,15 @@ SLIMLO_WORKER_PATH=../slimlo-api/build/slimlo_worker \
 dotnet test
 ```
 
-**Test suite:** 109 tests covering all public types, IPC protocol, diagnostic parsing, end-to-end conversion with 7 DOCX fixtures (multi-font, Unicode, rich formatting, large documents, missing fonts, custom font loading), concurrent conversions, dispose behavior, and error handling.
+**Test suite:** 170 tests covering all public types, IPC protocol, diagnostic parsing, end-to-end conversion with DOCX fixtures (multi-font, Unicode, rich formatting, large documents, missing fonts, custom font loading), concurrent conversions, dispose behavior, DOCX-only enforcement, and error handling.
 
 ---
 
 ## C API
 
 For direct native integration without process isolation overhead.
+
+> Supported input format is **DOCX only**. `SLIMLO_FORMAT_XLSX` / `SLIMLO_FORMAT_PPTX` are retained for ABI compatibility and return `SLIMLO_ERROR_INVALID_FORMAT`.
 
 ```c
 #include "slimlo.h"
@@ -317,7 +322,7 @@ int main() {
 
     SlimLOError err = slimlo_convert_file(
         h, "input.docx", "output.pdf",
-        SLIMLO_FORMAT_UNKNOWN,  // auto-detect from extension
+        SLIMLO_FORMAT_UNKNOWN,  // auto-detect (.docx only)
         NULL                    // default PDF options
     );
 
@@ -371,6 +376,27 @@ docker run --rm -v $(pwd)/output:/output slimlo-build
 | `LO_SRC_DIR` | `./lo-src` | LO source directory (~2.5 GB) |
 | `OUTPUT_DIR` | `./output` | Artifact output directory |
 | `NPROC` | auto-detected | Build parallelism (`-jN`) |
+| `DOCX_AGGRESSIVE` | `0` | `0=compat`, `1=docx-aggressive` runtime pruning profile |
+
+### Build profiles
+
+```bash
+# Conservative profile (default)
+DOCX_AGGRESSIVE=0 ./scripts/build.sh
+
+# Aggressive DOCX-only pruning profile
+DOCX_AGGRESSIVE=1 ./scripts/build.sh
+```
+
+### Probe aggressive candidates
+
+```bash
+# C gate (file-path conversion smoke)
+./scripts/prune-probe.sh ./output
+
+# Optional extra gate (enable .NET stream/buffer checks)
+PRUNE_DOTNET_GATE=1 ./scripts/prune-probe.sh ./output
+```
 
 **Linux prerequisites:**
 
@@ -394,14 +420,14 @@ brew install autoconf automake libtool pkg-config ccache \
 
 ```
 output/
-├── program/           # ~178 MB — all shared libraries
-│   ├── libmergedlo.{so,dylib,dll}  # ~98 MB core engine (LTO)
+├── program/           # ~138 MB compat / ~132 MB docx-aggressive (macOS local)
+│   ├── libmergedlo.{so,dylib,dll}  # ~65 MB core engine (macOS local, LTO)
 │   ├── libslimlo.{so,dylib,dll}    # C API wrapper
 │   ├── slimlo_worker               # IPC worker process
 │   ├── lib*.{so,dylib}             # UNO, ICU, externals, stubs
 │   ├── sofficerc                   # Bootstrap RC chain
 │   └── types/offapi.rdb            # UNO type registry
-├── share/             # ~7.6 MB — runtime config
+├── share/             # ~7.4 MB compat / ~2.5 MB docx-aggressive (macOS local)
 │   ├── registry/*.xcd
 │   ├── config/soffice.cfg/
 │   └── filter/
@@ -437,21 +463,30 @@ config_host.mk.in     →  ENABLE_SLIMLO=TRUE
 makefiles             →  $(if $(ENABLE_SLIMLO),,target)   # exclude targets
 ```
 
-| Patch | What it does |
-|-------|-------------|
-| 001 | Adds `--enable-slimlo` flag to `configure.ac` and `config_host.mk.in` |
-| 002 | Conditionally excludes 41 non-essential modules (dbaccess, wizards, extras, ...) |
-| 003 | Copies distro config into LO source tree |
-| 004 | Strips 11 non-Writer export filter targets (SVG, DocBook, XHTML, T602, ...) |
-| 005 | Removes desktop deployment GUI and UIConfig targets |
-| 006 | Fixes unconditional entries in `pre_MergedLibsList.mk` |
-| 007 | Moves DB-dependent code behind `DBCONNECTIVITY` guard |
-| 008 | Adds `--export-dynamic` to `libmergedlo.so` (Linux only; macOS exports symbols automatically) |
-| 009* | Restricts LTO to merged lib only. `-flto=thin` (macOS/Clang) or `-flto=auto` (Linux/GCC). |
-| 010 | Enables ICU data filtering — en-US only locale data instead of 30 MB archive |
-| 011 | Makes `SfxApplication::GetOrCreate()` unconditional in LOKit init (required on macOS) |
-
-*Post-autogen patch — runs after `autogen.sh` regenerates build files.
+| Patch script | What it does |
+|-------------|--------------|
+| `001-add-slimlo-configure-flag.sh` | Adds `--enable-slimlo` configure flag and host config propagation. |
+| `002-strip-modules.sh` | Excludes non-essential LO modules at build time. |
+| `003-slimlo-distro-config.sh` | Wires SlimLO distro config into LO build flow. |
+| `004-strip-filters.sh` | Removes non-Writer export filters not required for DOCX->PDF. |
+| `005-strip-ui-libraries.sh` | Strips GUI/deployment/UI config targets. |
+| `006-fix-mergelibs-conditionals.sh` | Fixes merge-lib conditionals for slimmed builds. |
+| `007-fix-swui-db-conditionals.sh` | Guards DB-related Writer UI code paths. |
+| `008-mergedlibs-export-constructors.sh` | Preserves UNO constructor symbol visibility in merged libs. |
+| `009-fix-nonmerged-lto-link.postautogen` | Post-autogen fix: LTO only on merged lib link step. |
+| `010-force-native-winsymlinks.sh` | Windows symlink/build-system compatibility fix. |
+| `010-icu-data-filter.sh` | Applies ICU data filtering (`icu-filter.json`). |
+| `011-fix-windows-midl-include.sh` | Fixes Windows MIDL include path issues. |
+| `011-sfxapplication-getorcreate.sh` | Stabilizes LOKit startup path (`SfxApplication::GetOrCreate`). |
+| `012-fix-lcms2-msbuild-env.sh` | Fixes lcms2 MSBuild environment handling on Windows. |
+| `013-fix-libjpeg-turbo-hidden-macro.sh` | Fixes hidden macro/visibility issue in libjpeg-turbo integration. |
+| `014-fix-icu-msvc-lib-env.sh` | Fixes ICU library environment handling under MSVC. |
+| `015-fix-icu-autoconf-wrapper-msvc.sh` | Fixes ICU autoconf wrapper behavior on MSVC toolchains. |
+| `016-fix-nss-msvc-env.sh` | Fixes NSS environment/toolchain handling on MSVC. |
+| `017-lokit-buffer-api.sh` | Adds LOKit buffer API (`documentLoadFromBuffer` / `saveToBuffer`). |
+| `018-fix-icu-windows-configure-flags.sh` | Fixes ICU-related Windows configure flags. |
+| `019-strip-windows-atl-targets.sh` | Removes unneeded ATL-linked Windows targets. |
+| `020-fix-harfbuzz-meson-msvc-path.sh` | Fixes HarfBuzz Meson MSVC path handling. |
 
 ---
 
@@ -493,24 +528,24 @@ macOS uses a different directory structure inside `.app/Contents/`. Build script
 
 Full LibreOffice `instdir/` is **~1.5 GB**. SlimLO reduces it in three stages:
 
-### Stage 1: Build-time stripping (1.5 GB → 300 MB)
+### Stage 1: Build-time stripping (1.5 GB -> ~300 MB)
 
-11 patch scripts conditionally exclude 41+ modules at compile time. Disabled: database connectivity, Java, Python, GUI backends (GTK/Qt), desktop integration, galleries, templates, help, fonts. Everything merges into `libmergedlo` via `--enable-mergelibs`.
+22 patch scripts conditionally exclude modules and fix platform-specific build edges (Linux/macOS/Windows). Disabled paths include DB tooling, Java/Python, desktop integration, and non-essential UI/runtime components. Everything merges into `libmergedlo` via `--enable-mergelibs`.
 
-### Stage 2: Artifact pruning (300 MB → 214 MB)
+### Stage 2: Artifact pruning (`compat`) (~300 MB -> ~146 MB)
 
-`extract-artifacts.sh` removes runtime files not needed for DOCX-to-PDF:
+`extract-artifacts.sh` baseline profile (`DOCX_AGGRESSIVE=0`) removes runtime files not needed for DOCX-to-PDF:
 
-- Non-Writer modules: Calc (23 MB), Impress (10 MB), Math (1.8 MB)
-- External import libraries: mwaw, etonyek, wps, orcus, odfgen, wpd, wpg (20 MB)
-- VBA macros, CUI dialogs, form controls, UI-only libraries (11 MB)
-- XCD config for Calc/Impress/Math/Base/Draw
+- Non-Writer modules and import backends
+- UI-only libraries/config packs
+- Unused XCD/runtime entries and helper executables
 
-### Stage 3: LTO + deep pruning (214 MB → 186 MB)
+### Stage 3: DOCX aggressive runtime pruning (`docx-aggressive`) (~146 MB -> ~134 MB macOS local)
 
-- **LTO**: Link-time optimization on `libmergedlo` with dead code elimination
-- **patchelf**: Remove unused `libcurl.so.4` dependency (~4.6 MB)
-- **Config pruning**: Remove `oovbaapi.rdb`, `lingucomponent.xcd`, signature SVGs
+- Enabled with `DOCX_AGGRESSIVE=1`
+- Candidate set validated by `scripts/prune-probe.sh`
+- Generated manifest: `artifacts/prune-manifest-docx-aggressive.txt`
+- Measured on macOS local (`2026-02-14`): **-11.4 MB** extracted runtime (`~146 MB -> ~134 MB`)
 
 ### What cannot be removed
 
@@ -581,11 +616,11 @@ apk add --no-cache \
 ├── distro-configs/
 │   ├── SlimLO.conf                # Linux/Windows configure flags
 │   └── SlimLO-macOS.conf          # macOS configure flags
-├── patches/                       # 11 idempotent .sh scripts
-│   ├── 001..008-*.sh              # Pre-autogen patches
-│   ├── 009-*.postautogen          # Post-autogen (LTO flags)
-│   ├── 010-icu-data-filter.sh     # ICU locale filtering
-│   └── 011-*.sh                   # macOS LOKit init fix
+├── patches/                       # 22 patch scripts (+ post-autogen)
+│   ├── 001..008-*.sh              # Core SlimLO build pruning/fixes
+│   ├── 009-*.postautogen          # Post-autogen link/LTO fix
+│   ├── 010..020-*.sh              # ICU/Windows/LOKit/platform fixes
+│   └── ...                        # See patch table above
 ├── scripts/
 │   ├── build.sh                   # Cross-platform build pipeline
 │   ├── apply-patches.sh           # Runs all patches in order
@@ -609,7 +644,7 @@ apk add --no-cache \
 │   │       └── Protocol.cs        # Length-prefixed JSON framing
 │   ├── SlimLO.NativeAssets.Linux/ # Native NuGet (linux-x64 + arm64)
 │   ├── SlimLO.NativeAssets.macOS/ # Native NuGet (osx-arm64 + x64)
-│   └── SlimLO.Tests/             # 109 xUnit tests
+│   └── SlimLO.Tests/             # 170 xUnit tests
 ├── docker/
 │   └── Dockerfile.linux-x64      # Multi-stage Docker build
 ├── .github/workflows/
