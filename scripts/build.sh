@@ -45,6 +45,30 @@ if [ "$PLATFORM" = "windows" ] && command -v cl.exe >/dev/null 2>&1; then
     echo "MSVC linker in use: $(command -v link.exe || echo 'not found')"
 fi
 
+if [ "$PLATFORM" = "windows" ] && [ -n "${ICU_DATA_FILTER_FILE:-}" ]; then
+    case "$ICU_DATA_FILTER_FILE" in
+        /*)
+            if command -v cygpath >/dev/null 2>&1; then
+                ICU_DATA_FILTER_FILE="$(cygpath -m "$ICU_DATA_FILTER_FILE")"
+                export ICU_DATA_FILTER_FILE
+            fi
+            ;;
+    esac
+    ICU_FILTER_CHECK="$ICU_DATA_FILTER_FILE"
+    case "$ICU_FILTER_CHECK" in
+        [A-Za-z]:/*)
+            if command -v cygpath >/dev/null 2>&1; then
+                ICU_FILTER_CHECK="$(cygpath -u "$ICU_FILTER_CHECK")"
+            fi
+            ;;
+    esac
+    if [ ! -f "$ICU_FILTER_CHECK" ]; then
+        echo "ERROR: ICU_DATA_FILTER_FILE not found: $ICU_DATA_FILTER_FILE"
+        exit 1
+    fi
+    echo "Using ICU_DATA_FILTER_FILE=$ICU_DATA_FILTER_FILE"
+fi
+
 if [ "$PLATFORM" = "windows" ] && ! command -v wslpath >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; then
     SHIM_DIR="$PROJECT_DIR/.slimlo-tools"
     mkdir -p "$SHIM_DIR"
