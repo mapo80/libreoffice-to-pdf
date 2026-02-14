@@ -66,6 +66,8 @@ MODULES_TO_STRIP=(
 
     # Platform-specific (leaf)
     "embedserv"
+    # Windows accessibility bridge (ATL/COM heavy, not needed for headless DOCX->PDF)
+    "winaccessibility"
     # NOTE: apple_remote is needed on macOS (vclplug_osx links against AppleRemote).
     # Only strip on non-macOS platforms.
     "android"
