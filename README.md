@@ -371,6 +371,32 @@ dotnet test --collect:"XPlat Code Coverage"
 - Custom font loading via `FontDirectories` (cross-platform: SAL_FONTPATH on Linux, CoreText on macOS)
 - Concurrent conversions, dispose behavior, error handling
 
+### Deploying to Linux
+
+The `SlimLO.NativeAssets.Linux` NuGet package bundles the LibreOffice engine and SlimLO worker, but the host must have system libraries installed (see [Linux system dependencies](#linux-system-dependencies)).
+
+**Docker (recommended):**
+
+```dockerfile
+FROM mcr.microsoft.com/dotnet/sdk:8.0-noble AS build
+WORKDIR /src
+COPY . .
+RUN dotnet publish MyApp.csproj -c Release -r linux-x64 --no-self-contained -o /app
+
+FROM mcr.microsoft.com/dotnet/runtime:8.0-noble
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libfontconfig1 libfreetype6 libexpat1 libcairo2 libpng16-16 \
+    libjpeg-turbo8 libxml2 libxslt1.1 libicu74 libnss3 libnspr4 \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY --from=build /app .
+ENTRYPOINT ["dotnet", "MyApp.dll"]
+```
+
+> Use the `-noble` (Ubuntu 24.04) variant of the .NET images. The default Debian-based images use different package names.
+
+**Bare-metal / VM:** Install the system libraries listed in [Linux system dependencies](#linux-system-dependencies), then run your published .NET app normally.
+
 ## Build pipeline
 
 ### Docker pipeline (Linux)
@@ -673,11 +699,49 @@ Full LibreOffice `instdir/` is **~1.5 GB**. SlimLO reduces it in three stages:
 
 ## Runtime requirements
 
+### Build requirements
+
+- **Docker Desktop memory**: 16 GB+ recommended. Large LO source files (`docxattributeoutput.cxx`, `DocumentContentOperationsManager.cxx`) need ~3 GB per compiler process.
+
+### Runtime requirements
+
+- **Runtime memory**: ~200 MB per worker process.
 - **Docker seccomp** (Linux): `--security-opt seccomp=unconfined` required. LibreOffice uses `clone3()` for thread creation, blocked by Docker's default seccomp profile.
-- **Build memory**: 16 GB+ for Docker Desktop. Large LO source files (`docxattributeoutput.cxx`, `DocumentContentOperationsManager.cxx`) need ~3 GB per compiler process.
-- **Runtime memory**: ~200 MB per process.
-- **Linux dependencies** (runtime): `libfontconfig1`, `libfreetype6`, `libcairo2`, `libxml2`, `libxslt1.1`, `libicu74`, `libnss3`, `fonts-liberation`.
 - **macOS**: No additional runtime dependencies needed (system frameworks suffice).
+
+### Linux system dependencies
+
+The SlimLO NuGet package bundles the LibreOffice engine and C API, but **not** the system-level shared libraries it links against. These must be installed on the host system.
+
+**Ubuntu / Debian:**
+
+```bash
+apt-get install -y --no-install-recommends \
+    libfontconfig1 libfreetype6 libexpat1 libcairo2 libpng16-16 \
+    libjpeg-turbo8 libxml2 libxslt1.1 libicu74 libnss3 libnspr4
+```
+
+> On Ubuntu 22.04 (Jammy), use `libicu70` instead of `libicu74`.
+
+**Fedora / RHEL / Amazon Linux:**
+
+```bash
+dnf install -y \
+    fontconfig freetype expat cairo libpng libjpeg-turbo \
+    libxml2 libxslt libicu nss nspr
+```
+
+**Alpine:**
+
+```bash
+apk add --no-cache \
+    fontconfig freetype expat cairo libpng libjpeg-turbo \
+    libxml2 libxslt icu-libs nss nspr
+```
+
+**Optional — fonts:** Install `fonts-liberation` (or your preferred font package) for accurate text rendering. Alternatively, use `PdfConverterOptions.FontDirectories` to load custom fonts at runtime.
+
+**Troubleshooting:** If the worker process crashes at startup with `error while loading shared libraries: libfoo.so`, install the missing library with your package manager. The .NET SDK will include the library name in the exception message.
 
 ## License
 

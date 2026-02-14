@@ -1,0 +1,30 @@
+FROM --platform=linux/amd64 mcr.microsoft.com/dotnet/sdk:8.0-noble AS build
+
+WORKDIR /src
+
+# Copy NuGet packages
+COPY dotnet/nupkgs/ /nupkgs/
+
+# Copy example project
+COPY example/ example/
+
+# Override nuget.config to use /nupkgs as local source
+RUN printf '<?xml version="1.0" encoding="utf-8"?>\n<configuration>\n  <packageSources>\n    <clear />\n    <add key="local" value="/nupkgs" />\n    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />\n  </packageSources>\n</configuration>\n' > example/nuget.config
+
+# Publish
+RUN dotnet publish example/Example.csproj -c Release -r linux-x64 --no-self-contained -o /app
+
+# Runtime — use Ubuntu-based image for system library support
+FROM --platform=linux/amd64 mcr.microsoft.com/dotnet/runtime:8.0-noble
+
+# Install minimal runtime dependencies for LibreOffice
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libfontconfig1 libfreetype6 libexpat1 libcairo2 libpng16-16 \
+    libjpeg-turbo8 libxml2 libxslt1.1 libicu74 libnss3 libnspr4 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=build /app .
+COPY tests/fixtures/rich_formatting.docx /test.docx
+
+ENTRYPOINT ["dotnet", "Example.dll", "/test.docx", "/output.pdf"]

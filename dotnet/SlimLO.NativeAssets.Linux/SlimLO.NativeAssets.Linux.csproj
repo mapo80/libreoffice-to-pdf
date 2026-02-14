@@ -10,7 +10,7 @@
     <PackageId>SlimLO.NativeAssets.Linux</PackageId>
     <Version>0.1.0</Version>
     <Authors>SlimLO Contributors</Authors>
-    <Description>Native Linux runtime for SlimLO PDF converter. Contains the LibreOffice headless engine, SlimLO C API, and worker process for x64 and arm64.</Description>
+    <Description>Native Linux runtime for SlimLO PDF converter. Contains the LibreOffice headless engine, SlimLO C API, and worker process for x64 and arm64. Requires system libraries: libfontconfig1, libfreetype6, libcairo2, libxml2, libxslt1.1, libicu, libnss3. See project README for install commands.</Description>
     <PackageLicenseExpression>MPL-2.0</PackageLicenseExpression>
     <PackageTags>pdf;conversion;libreoffice;native;linux</PackageTags>
     <RepositoryType>git</RepositoryType>
@@ -23,18 +23,18 @@
     <NativeDir_arm64 Condition="'$(NativeDir_arm64)' == ''">../../output-linux-arm64/</NativeDir_arm64>
   </PropertyGroup>
 
-  <!-- linux-x64 runtime assets (preserve program/ hierarchy for WorkerLocator) -->
+  <!-- linux-x64 runtime assets (custom path to avoid SDK's native asset flattening) -->
   <ItemGroup Condition="Exists('$(NativeDir_x64)')">
-    <Content Include="$(NativeDir_x64)program/**" PackagePath="runtimes/linux-x64/native/program/" />
-    <Content Include="$(NativeDir_x64)share/**" PackagePath="runtimes/linux-x64/native/share/" />
-    <Content Include="$(NativeDir_x64)presets/**" PackagePath="runtimes/linux-x64/native/presets/" />
+    <Content Include="$(NativeDir_x64)program/**" PackagePath="slimlo/linux-x64/program/" />
+    <Content Include="$(NativeDir_x64)share/**" PackagePath="slimlo/linux-x64/share/" />
+    <Content Include="$(NativeDir_x64)presets/**" PackagePath="slimlo/linux-x64/presets/" />
   </ItemGroup>
 
   <!-- linux-arm64 runtime assets -->
   <ItemGroup Condition="Exists('$(NativeDir_arm64)')">
-    <Content Include="$(NativeDir_arm64)program/**" PackagePath="runtimes/linux-arm64/native/program/" />
-    <Content Include="$(NativeDir_arm64)share/**" PackagePath="runtimes/linux-arm64/native/share/" />
-    <Content Include="$(NativeDir_arm64)presets/**" PackagePath="runtimes/linux-arm64/native/presets/" />
+    <Content Include="$(NativeDir_arm64)program/**" PackagePath="slimlo/linux-arm64/program/" />
+    <Content Include="$(NativeDir_arm64)share/**" PackagePath="slimlo/linux-arm64/share/" />
+    <Content Include="$(NativeDir_arm64)presets/**" PackagePath="slimlo/linux-arm64/presets/" />
   </ItemGroup>
 
   <!-- Ship MSBuild .targets so consumers get native files copied to output -->
