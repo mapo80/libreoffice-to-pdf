@@ -45,4 +45,5 @@ public sealed class PdfConverterOptions
     /// If false (default), workers start lazily on first conversion.
     /// </summary>
     public bool WarmUp { get; init; }
+
 }

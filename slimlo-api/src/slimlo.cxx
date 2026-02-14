@@ -12,17 +12,12 @@
 
 #include <cstdlib>
 #include <cstring>
-#include <fstream>
 #include <mutex>
 #include <string>
 
 #ifdef _WIN32
-  #include <io.h>
-  #include <direct.h>
   #include <windows.h>
-  #define unlink _unlink
 #else
-  #include <unistd.h>
   #include <sys/stat.h>
 #endif
 
@@ -108,22 +103,14 @@ static const char* get_pdf_filter(SlimLOFormat format) {
     return "pdf";
 }
 
-// Create a temporary file and return its path (empty string on failure)
-static std::string make_temp_file() {
-#ifdef _WIN32
-    char tmp_dir[MAX_PATH];
-    GetTempPathA(MAX_PATH, tmp_dir);
-    char tmp_file[MAX_PATH];
-    if (GetTempFileNameA(tmp_dir, "slo", 0, tmp_file) == 0)
-        return "";
-    return std::string(tmp_file);
-#else
-    char tmpl[] = "/tmp/slimlo_XXXXXX";
-    int fd = mkstemp(tmpl);
-    if (fd < 0) return "";
-    close(fd);
-    return std::string(tmpl);
-#endif
+// Map SlimLOFormat to format string for documentLoadFromBuffer
+static const char* get_format_string(SlimLOFormat format) {
+    switch (format) {
+        case SLIMLO_FORMAT_DOCX: return "docx";
+        case SLIMLO_FORMAT_XLSX: return "xlsx";
+        case SLIMLO_FORMAT_PPTX: return "pptx";
+        default: return nullptr;
+    }
 }
 
 // Build PDF filter options string from SlimLOPdfOptions
@@ -323,83 +310,54 @@ SLIMLO_API SlimLOError slimlo_convert_buffer(
     *output_data = nullptr;
     *output_size = 0;
 
-    // Write input to temporary file (LOKit doesn't support memory buffers directly)
-    // TODO: Implement custom UCB provider for zero-copy memory conversion
-    const char* ext = ".tmp";
-    switch (format_hint) {
-        case SLIMLO_FORMAT_DOCX: ext = ".docx"; break;
-        case SLIMLO_FORMAT_XLSX: ext = ".xlsx"; break;
-        case SLIMLO_FORMAT_PPTX: ext = ".pptx"; break;
-        default: break;
+    // Serialize — LibreOffice cannot do concurrent conversions
+    std::lock_guard<std::mutex> lock(handle->convert_mutex);
+
+    // Map format to string for LOKit
+    const char* format_str = get_format_string(format_hint);
+    if (!format_str) {
+        set_error(handle, "format_hint is required for buffer conversion");
+        return SLIMLO_ERROR_INVALID_FORMAT;
     }
 
-    std::string tmp_base = make_temp_file();
-    if (tmp_base.empty()) {
-        set_error(handle, "Failed to create temporary input file");
-        return SLIMLO_ERROR_PERMISSION_DENIED;
+    // Handle password-protected documents
+    const char* load_options = nullptr;
+    std::string load_opts_str;
+    if (options && options->password && options->password[0] != '\0') {
+        load_opts_str = std::string("{\"Password\":{\"type\":\"string\",\"value\":\"")
+                        + options->password + "\"}}";
+        load_options = load_opts_str.c_str();
     }
 
-    // Append correct extension
-    std::string tmp_input_path = tmp_base + ext;
-    rename(tmp_base.c_str(), tmp_input_path.c_str());
-
-    // Write input data
-    {
-        std::ofstream ofs(tmp_input_path, std::ios::binary);
-        ofs.write(reinterpret_cast<const char*>(input_data), input_size);
-        if (!ofs) {
-            unlink(tmp_input_path.c_str());
-            set_error(handle, "Failed to write temporary input file");
-            return SLIMLO_ERROR_PERMISSION_DENIED;
-        }
+    // Load document from buffer (uses private:stream internally — no temp files)
+    lok::Document* doc = handle->office->documentLoadFromBuffer(
+        input_data, input_size, format_str, load_options);
+    if (!doc) {
+        const char* err = handle->office->getError();
+        set_error(handle, err ? err : "Failed to load document from buffer");
+        return SLIMLO_ERROR_LOAD_FAILED;
     }
 
-    // Create temporary output file
-    std::string tmp_out_base = make_temp_file();
-    if (tmp_out_base.empty()) {
-        unlink(tmp_input_path.c_str());
-        set_error(handle, "Failed to create temporary output file");
-        return SLIMLO_ERROR_PERMISSION_DENIED;
-    }
-    std::string tmp_output_path = tmp_out_base + ".pdf";
-    rename(tmp_out_base.c_str(), tmp_output_path.c_str());
+    // Build filter options
+    std::string filter_options = build_filter_options(options);
 
-    // Convert
-    SlimLOError err = slimlo_convert_file(handle, tmp_input_path.c_str(),
-                                          tmp_output_path.c_str(),
-                                          format_hint, options);
+    // Save to buffer (uses private:stream internally — no temp files)
+    unsigned char* pdf_buf = nullptr;
+    size_t pdf_size = 0;
+    bool success = doc->saveToBuffer(&pdf_buf, &pdf_size, "pdf",
+        filter_options.empty() ? nullptr : filter_options.c_str());
 
-    // Clean up input
-    unlink(tmp_input_path.c_str());
+    delete doc;
 
-    if (err != SLIMLO_OK) {
-        unlink(tmp_output_path.c_str());
-        return err;
-    }
-
-    // Read output
-    std::ifstream ifs(tmp_output_path, std::ios::binary | std::ios::ate);
-    if (!ifs) {
-        unlink(tmp_output_path.c_str());
-        set_error(handle, "Failed to read converted PDF");
+    if (!success || !pdf_buf) {
+        const char* err = handle->office->getError();
+        set_error(handle, err ? err : "Failed to export PDF to buffer");
+        free(pdf_buf);
         return SLIMLO_ERROR_EXPORT_FAILED;
     }
 
-    size_t size = ifs.tellg();
-    ifs.seekg(0);
-
-    uint8_t* buf = static_cast<uint8_t*>(malloc(size));
-    if (!buf) {
-        unlink(tmp_output_path.c_str());
-        set_error(handle, "Out of memory");
-        return SLIMLO_ERROR_OUT_OF_MEMORY;
-    }
-
-    ifs.read(reinterpret_cast<char*>(buf), size);
-    unlink(tmp_output_path.c_str());
-
-    *output_data = buf;
-    *output_size = size;
+    *output_data = pdf_buf;
+    *output_size = pdf_size;
     handle->last_error.clear();
     return SLIMLO_OK;
 }

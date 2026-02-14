@@ -97,6 +97,11 @@ public sealed class ConversionResult<T> : ConversionResult
     /// <summary>Output data (e.g., PDF bytes). Null if conversion failed.</summary>
     public T? Data { get; }
 
+    /// <summary>Convert to base ConversionResult (drops the data).</summary>
+    internal ConversionResult AsBase() => Success
+        ? ConversionResult.Ok(Diagnostics)
+        : ConversionResult.Fail(ErrorMessage!, ErrorCode!.Value, Diagnostics);
+
     internal static ConversionResult<T> Ok(
         T data,
         IReadOnlyList<ConversionDiagnostic>? diagnostics) =>

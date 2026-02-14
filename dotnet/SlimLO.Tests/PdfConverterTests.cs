@@ -267,6 +267,29 @@ public class ConversionResultGenericTests
         result = ConversionResult<byte[]>.Fail("err", SlimLOErrorCode.Unknown, null);
         Assert.False(result);
     }
+
+    [Fact]
+    public void AsBase_Success_PreservesDiagnostics()
+    {
+        var diags = new[] { new ConversionDiagnostic(DiagnosticSeverity.Warning, DiagnosticCategory.Font, "warn") };
+        var typed = ConversionResult<byte[]>.Ok(new byte[] { 1, 2 }, diags);
+        ConversionResult baseResult = typed.AsBase();
+
+        Assert.True(baseResult.Success);
+        Assert.Null(baseResult.ErrorMessage);
+        Assert.Single(baseResult.Diagnostics);
+    }
+
+    [Fact]
+    public void AsBase_Failure_PreservesErrorInfo()
+    {
+        var typed = ConversionResult<byte[]>.Fail("boom", SlimLOErrorCode.ExportFailed, null);
+        ConversionResult baseResult = typed.AsBase();
+
+        Assert.False(baseResult.Success);
+        Assert.Equal("boom", baseResult.ErrorMessage);
+        Assert.Equal(SlimLOErrorCode.ExportFailed, baseResult.ErrorCode);
+    }
 }
 
 // ===========================================================================
@@ -599,7 +622,7 @@ public class ProtocolTests
     {
         var ms = new MemoryStream();
         var lengthBytes = new byte[4];
-        BinaryPrimitives.WriteUInt32LittleEndian(lengthBytes, 20_000_000); // 20 MB > 16 MB limit
+        BinaryPrimitives.WriteUInt32LittleEndian(lengthBytes, 300_000_000); // 300 MB > 256 MB limit
         ms.Write(lengthBytes);
         ms.Position = 0;
 
@@ -789,6 +812,98 @@ public class ProtocolTests
 
         using var doc = JsonDocument.Parse(json);
         Assert.False(doc.RootElement.TryGetProperty("font_paths", out _));
+    }
+
+    [Fact]
+    public void Serialize_ConvertBufferRequest()
+    {
+        var request = new ConvertBufferRequest
+        {
+            Id = 7,
+            Format = 1,
+            DataSize = 1024,
+            Options = new ConvertRequestOptions { Dpi = 300 }
+        };
+        var bytes = Protocol.Serialize(request);
+        var json = Encoding.UTF8.GetString(bytes);
+
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal("convert_buffer", doc.RootElement.GetProperty("type").GetString());
+        Assert.Equal(7, doc.RootElement.GetProperty("id").GetInt32());
+        Assert.Equal(1, doc.RootElement.GetProperty("format").GetInt32());
+        Assert.Equal(1024, doc.RootElement.GetProperty("data_size").GetInt64());
+        Assert.Equal(300, doc.RootElement.GetProperty("options").GetProperty("dpi").GetInt32());
+    }
+
+    [Fact]
+    public void Serialize_ConvertBufferRequest_WithoutOptions_OmitsField()
+    {
+        var request = new ConvertBufferRequest { Id = 1, Format = 1, DataSize = 512 };
+        var bytes = Protocol.Serialize(request);
+        var json = Encoding.UTF8.GetString(bytes);
+
+        using var doc = JsonDocument.Parse(json);
+        Assert.False(doc.RootElement.TryGetProperty("options", out _));
+    }
+
+    [Fact]
+    public async Task WriteAndRead_ReadOnlyMemory_RoundTrips()
+    {
+        var ms = new MemoryStream();
+        var payload = new byte[] { 0x01, 0x02, 0x03, 0xFF };
+        ReadOnlyMemory<byte> memory = payload.AsMemory();
+
+        await Protocol.WriteMessageAsync(ms, memory, CancellationToken.None);
+        ms.Position = 0;
+
+        var result = await Protocol.ReadMessageAsync(ms, CancellationToken.None);
+        Assert.NotNull(result);
+        Assert.Equal(payload, result);
+    }
+
+    [Fact]
+    public async Task WriteAndRead_ReadOnlyMemory_LargePayload()
+    {
+        var ms = new MemoryStream();
+        var payload = new byte[5 * 1024 * 1024]; // 5 MB
+        Random.Shared.NextBytes(payload);
+
+        await Protocol.WriteMessageAsync(ms, payload.AsMemory(), CancellationToken.None);
+        ms.Position = 0;
+
+        var result = await Protocol.ReadMessageAsync(ms, CancellationToken.None);
+        Assert.NotNull(result);
+        Assert.Equal(payload, result);
+    }
+
+    [Fact]
+    public async Task WriteAndRead_MixedByteArrayAndReadOnlyMemory()
+    {
+        var ms = new MemoryStream();
+        var jsonPayload = Encoding.UTF8.GetBytes("{\"type\":\"convert_buffer\"}");
+        var binaryPayload = new byte[] { 0xDE, 0xAD, 0xBE, 0xEF };
+
+        await Protocol.WriteMessageAsync(ms, jsonPayload, CancellationToken.None);
+        await Protocol.WriteMessageAsync(ms, binaryPayload.AsMemory(), CancellationToken.None);
+        ms.Position = 0;
+
+        var r1 = await Protocol.ReadMessageAsync(ms, CancellationToken.None);
+        var r2 = await Protocol.ReadMessageAsync(ms, CancellationToken.None);
+
+        Assert.Equal(jsonPayload, r1);
+        Assert.Equal(binaryPayload, r2);
+    }
+
+    [Fact]
+    public async Task WriteAndRead_ReadOnlyMemory_EmptyPayload()
+    {
+        var ms = new MemoryStream();
+        await Protocol.WriteMessageAsync(ms, ReadOnlyMemory<byte>.Empty, CancellationToken.None);
+        ms.Position = 0;
+
+        var result = await Protocol.ReadMessageAsync(ms, CancellationToken.None);
+        Assert.NotNull(result);
+        Assert.Empty(result);
     }
 }
 
@@ -1400,3 +1515,684 @@ public class PdfConverterIntegrationTests : IAsyncDisposable
         }
     }
 }
+
+// ===========================================================================
+// PdfConverter Stream validation tests (argument checking, no conversion needed)
+// ===========================================================================
+
+public class PdfConverterStreamValidationTests
+{
+    // -- Stream → Stream validation --
+
+    [Fact]
+    public async Task ConvertAsync_StreamToStream_NullInput_Throws()
+    {
+        if (!TestHelpers.CanRunIntegration()) return;
+        await using var converter = PdfConverter.Create(new PdfConverterOptions
+            { ResourcePath = TestHelpers.GetResourcePath() });
+
+        await Assert.ThrowsAsync<ArgumentNullException>(() =>
+            converter.ConvertAsync((Stream)null!, new MemoryStream(), DocumentFormat.Docx));
+    }
+
+    [Fact]
+    public async Task ConvertAsync_StreamToStream_NullOutput_Throws()
+    {
+        if (!TestHelpers.CanRunIntegration()) return;
+        await using var converter = PdfConverter.Create(new PdfConverterOptions
+            { ResourcePath = TestHelpers.GetResourcePath() });
+
+        await Assert.ThrowsAsync<ArgumentNullException>(() =>
+            converter.ConvertAsync(new MemoryStream(new byte[] { 1 }), (Stream)null!, DocumentFormat.Docx));
+    }
+
+    [Fact]
+    public async Task ConvertAsync_StreamToStream_UnknownFormat_ReturnsFailure()
+    {
+        if (!TestHelpers.CanRunIntegration()) return;
+        await using var converter = PdfConverter.Create(new PdfConverterOptions
+            { ResourcePath = TestHelpers.GetResourcePath() });
+
+        var result = await converter.ConvertAsync(
+            new MemoryStream(new byte[] { 1 }), new MemoryStream(), DocumentFormat.Unknown);
+
+        Assert.False(result.Success);
+        Assert.Equal(SlimLOErrorCode.InvalidFormat, result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task ConvertAsync_StreamToStream_NonReadableInput_ReturnsFailure()
+    {
+        if (!TestHelpers.CanRunIntegration()) return;
+        await using var converter = PdfConverter.Create(new PdfConverterOptions
+            { ResourcePath = TestHelpers.GetResourcePath() });
+
+        var closedStream = new MemoryStream();
+        closedStream.Close();
+
+        var result = await converter.ConvertAsync(
+            closedStream, new MemoryStream(), DocumentFormat.Docx);
+
+        Assert.False(result.Success);
+        Assert.Equal(SlimLOErrorCode.InvalidArgument, result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task ConvertAsync_StreamToStream_NonWritableOutput_ReturnsFailure()
+    {
+        if (!TestHelpers.CanRunIntegration()) return;
+        await using var converter = PdfConverter.Create(new PdfConverterOptions
+            { ResourcePath = TestHelpers.GetResourcePath() });
+
+        var readOnlyStream = new MemoryStream(new byte[] { 1 }, writable: false);
+
+        var result = await converter.ConvertAsync(
+            new MemoryStream(new byte[] { 1 }), readOnlyStream, DocumentFormat.Docx);
+
+        Assert.False(result.Success);
+        Assert.Equal(SlimLOErrorCode.InvalidArgument, result.ErrorCode);
+    }
+
+    // -- Stream → File validation --
+
+    [Fact]
+    public async Task ConvertAsync_StreamToFile_NullInput_Throws()
+    {
+        if (!TestHelpers.CanRunIntegration()) return;
+        await using var converter = PdfConverter.Create(new PdfConverterOptions
+            { ResourcePath = TestHelpers.GetResourcePath() });
+
+        await Assert.ThrowsAsync<ArgumentNullException>(() =>
+            converter.ConvertAsync((Stream)null!, "/tmp/out.pdf", DocumentFormat.Docx));
+    }
+
+    [Fact]
+    public async Task ConvertAsync_StreamToFile_EmptyOutputPath_Throws()
+    {
+        if (!TestHelpers.CanRunIntegration()) return;
+        await using var converter = PdfConverter.Create(new PdfConverterOptions
+            { ResourcePath = TestHelpers.GetResourcePath() });
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            converter.ConvertAsync(new MemoryStream(new byte[] { 1 }), "", DocumentFormat.Docx));
+    }
+
+    [Fact]
+    public async Task ConvertAsync_StreamToFile_UnknownFormat_ReturnsFailure()
+    {
+        if (!TestHelpers.CanRunIntegration()) return;
+        await using var converter = PdfConverter.Create(new PdfConverterOptions
+            { ResourcePath = TestHelpers.GetResourcePath() });
+
+        var result = await converter.ConvertAsync(
+            new MemoryStream(new byte[] { 1 }), "/tmp/out.pdf", DocumentFormat.Unknown);
+
+        Assert.False(result.Success);
+        Assert.Equal(SlimLOErrorCode.InvalidFormat, result.ErrorCode);
+    }
+
+    // -- File → Stream validation --
+
+    [Fact]
+    public async Task ConvertAsync_FileToStream_EmptyInputPath_Throws()
+    {
+        if (!TestHelpers.CanRunIntegration()) return;
+        await using var converter = PdfConverter.Create(new PdfConverterOptions
+            { ResourcePath = TestHelpers.GetResourcePath() });
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            converter.ConvertAsync("", new MemoryStream()));
+    }
+
+    [Fact]
+    public async Task ConvertAsync_FileToStream_NullOutput_Throws()
+    {
+        if (!TestHelpers.CanRunIntegration()) return;
+        await using var converter = PdfConverter.Create(new PdfConverterOptions
+            { ResourcePath = TestHelpers.GetResourcePath() });
+
+        await Assert.ThrowsAsync<ArgumentNullException>(() =>
+            converter.ConvertAsync("/tmp/in.docx", (Stream)null!));
+    }
+
+    [Fact]
+    public async Task ConvertAsync_FileToStream_FileNotFound_ReturnsFailure()
+    {
+        if (!TestHelpers.CanRunIntegration()) return;
+        await using var converter = PdfConverter.Create(new PdfConverterOptions
+            { ResourcePath = TestHelpers.GetResourcePath() });
+
+        var result = await converter.ConvertAsync(
+            "/nonexistent/input.docx", new MemoryStream());
+
+        Assert.False(result.Success);
+        Assert.Equal(SlimLOErrorCode.FileNotFound, result.ErrorCode);
+    }
+
+    // -- Disposed converter --
+
+    [Fact]
+    public async Task ConvertAsync_StreamToStream_AfterDispose_Throws()
+    {
+        if (!TestHelpers.CanRunIntegration()) return;
+        var converter = PdfConverter.Create(new PdfConverterOptions
+            { ResourcePath = TestHelpers.GetResourcePath() });
+        await converter.DisposeAsync();
+
+        await Assert.ThrowsAsync<ObjectDisposedException>(() =>
+            converter.ConvertAsync(new MemoryStream(), new MemoryStream(), DocumentFormat.Docx));
+    }
+
+    [Fact]
+    public async Task ConvertAsync_StreamToFile_AfterDispose_Throws()
+    {
+        if (!TestHelpers.CanRunIntegration()) return;
+        var converter = PdfConverter.Create(new PdfConverterOptions
+            { ResourcePath = TestHelpers.GetResourcePath() });
+        await converter.DisposeAsync();
+
+        await Assert.ThrowsAsync<ObjectDisposedException>(() =>
+            converter.ConvertAsync(new MemoryStream(), "/tmp/out.pdf", DocumentFormat.Docx));
+    }
+
+    [Fact]
+    public async Task ConvertAsync_FileToStream_AfterDispose_Throws()
+    {
+        if (!TestHelpers.CanRunIntegration()) return;
+        var converter = PdfConverter.Create(new PdfConverterOptions
+            { ResourcePath = TestHelpers.GetResourcePath() });
+        await converter.DisposeAsync();
+
+        await Assert.ThrowsAsync<ObjectDisposedException>(() =>
+            converter.ConvertAsync("/tmp/in.docx", new MemoryStream()));
+    }
+}
+
+// ===========================================================================
+// PdfConverter Stream integration tests (require worker + SLIMLO_RESOURCE_PATH)
+// ===========================================================================
+
+public class PdfConverterStreamIntegrationTests : IAsyncDisposable
+{
+    private PdfConverter? _converter;
+
+    private PdfConverter? GetOrCreateConverter()
+    {
+        if (_converter is not null) return _converter;
+        if (!TestHelpers.CanRunIntegration()) return null;
+        _converter = PdfConverter.Create(new PdfConverterOptions
+        {
+            ResourcePath = TestHelpers.GetResourcePath()
+        });
+        return _converter;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_converter is not null)
+            await _converter.DisposeAsync();
+    }
+
+    // --- Stream → Stream ---
+
+    [Fact]
+    public async Task ConvertAsync_StreamToStream_ValidDocx_ProducesPdf()
+    {
+        var converter = GetOrCreateConverter();
+        if (converter is null) return;
+        var testDocx = TestHelpers.FindTestDocx();
+        if (testDocx == null) return;
+
+        await using var inputFs = File.OpenRead(testDocx);
+        using var outputMs = new MemoryStream();
+
+        var result = await converter.ConvertAsync(
+            inputFs, outputMs, DocumentFormat.Docx);
+
+        Assert.True(result.Success, $"Conversion failed: {result.ErrorMessage}");
+        Assert.True(outputMs.Length > 100, $"PDF too small: {outputMs.Length}");
+
+        outputMs.Position = 0;
+        var header = new byte[4];
+        await outputMs.ReadAsync(header);
+        Assert.Equal((byte)'%', header[0]);
+        Assert.Equal((byte)'P', header[1]);
+        Assert.Equal((byte)'D', header[2]);
+        Assert.Equal((byte)'F', header[3]);
+    }
+
+    [Fact]
+    public async Task ConvertAsync_StreamToStream_MemoryStreamInput_Works()
+    {
+        var converter = GetOrCreateConverter();
+        if (converter is null) return;
+        var testDocx = TestHelpers.FindTestDocx();
+        if (testDocx == null) return;
+
+        var docxBytes = await File.ReadAllBytesAsync(testDocx);
+        using var inputMs = new MemoryStream(docxBytes);
+        using var outputMs = new MemoryStream();
+
+        var result = await converter.ConvertAsync(
+            inputMs, outputMs, DocumentFormat.Docx);
+
+        Assert.True(result.Success, $"Conversion failed: {result.ErrorMessage}");
+        Assert.True(outputMs.Length > 100);
+    }
+
+    [Fact]
+    public async Task ConvertAsync_StreamToStream_PreservesDiagnostics()
+    {
+        var converter = GetOrCreateConverter();
+        if (converter is null) return;
+        var fixture = TestHelpers.FindFixture("missing_fonts.docx");
+        if (fixture == null) return;
+
+        await using var inputFs = File.OpenRead(fixture);
+        using var outputMs = new MemoryStream();
+
+        var result = await converter.ConvertAsync(
+            inputFs, outputMs, DocumentFormat.Docx);
+
+        Assert.True(result.Success);
+        Assert.NotNull(result.Diagnostics);
+    }
+
+    [Fact]
+    public async Task ConvertAsync_StreamToStream_NoTempDirectoryCreated()
+    {
+        var converter = GetOrCreateConverter();
+        if (converter is null) return;
+        var testDocx = TestHelpers.FindTestDocx();
+        if (testDocx == null) return;
+
+        var tempDir = Path.Combine(Path.GetTempPath(), "slimlo");
+        if (Directory.Exists(tempDir))
+            Directory.Delete(tempDir, recursive: true);
+
+        var docxBytes = await File.ReadAllBytesAsync(testDocx);
+        using var inputMs = new MemoryStream(docxBytes);
+        using var outputMs = new MemoryStream();
+
+        var result = await converter.ConvertAsync(
+            inputMs, outputMs, DocumentFormat.Docx);
+
+        Assert.True(result.Success);
+        Assert.True(outputMs.Length > 100);
+        Assert.False(Directory.Exists(tempDir),
+            "slimlo temp directory should not be created for buffer/stream conversions");
+    }
+
+    // --- Stream → File ---
+
+    [Fact]
+    public async Task ConvertAsync_StreamToFile_ValidDocx_ProducesPdf()
+    {
+        var converter = GetOrCreateConverter();
+        if (converter is null) return;
+        var testDocx = TestHelpers.FindTestDocx();
+        if (testDocx == null) return;
+
+        var output = Path.Combine(Path.GetTempPath(), $"slimlo_s2f_{Guid.NewGuid():N}.pdf");
+        try
+        {
+            await using var inputFs = File.OpenRead(testDocx);
+            var result = await converter.ConvertAsync(
+                inputFs, output, DocumentFormat.Docx);
+
+            Assert.True(result.Success, $"Conversion failed: {result.ErrorMessage}");
+            Assert.True(File.Exists(output));
+
+            var pdfBytes = await File.ReadAllBytesAsync(output);
+            Assert.True(pdfBytes.Length > 100);
+            Assert.Equal((byte)'%', pdfBytes[0]);
+            Assert.Equal((byte)'P', pdfBytes[1]);
+        }
+        finally
+        {
+            if (File.Exists(output)) File.Delete(output);
+        }
+    }
+
+    // --- File → Stream ---
+
+    [Fact]
+    public async Task ConvertAsync_FileToStream_ValidDocx_ProducesPdf()
+    {
+        var converter = GetOrCreateConverter();
+        if (converter is null) return;
+        var testDocx = TestHelpers.FindTestDocx();
+        if (testDocx == null) return;
+
+        using var outputMs = new MemoryStream();
+        var result = await converter.ConvertAsync(testDocx, outputMs);
+
+        Assert.True(result.Success, $"Conversion failed: {result.ErrorMessage}");
+        Assert.True(outputMs.Length > 100, $"PDF too small: {outputMs.Length}");
+
+        outputMs.Position = 0;
+        var header = new byte[4];
+        await outputMs.ReadAsync(header);
+        Assert.Equal((byte)'%', header[0]);
+        Assert.Equal((byte)'P', header[1]);
+        Assert.Equal((byte)'D', header[2]);
+        Assert.Equal((byte)'F', header[3]);
+    }
+
+    [Fact]
+    public async Task ConvertAsync_FileToStream_NoTempDirectoryCreated()
+    {
+        var converter = GetOrCreateConverter();
+        if (converter is null) return;
+        var testDocx = TestHelpers.FindTestDocx();
+        if (testDocx == null) return;
+
+        var tempDir = Path.Combine(Path.GetTempPath(), "slimlo");
+        if (Directory.Exists(tempDir))
+            Directory.Delete(tempDir, recursive: true);
+
+        using var outputMs = new MemoryStream();
+        var result = await converter.ConvertAsync(testDocx, outputMs);
+
+        Assert.True(result.Success);
+        Assert.True(outputMs.Length > 100);
+        Assert.False(Directory.Exists(tempDir),
+            "slimlo temp directory should not be created for file→stream conversions");
+    }
+
+    // --- Complex fixtures with stream overloads ---
+
+    [Theory]
+    [InlineData("multi_font.docx")]
+    [InlineData("rich_formatting.docx")]
+    [InlineData("unicode_text.docx")]
+    [InlineData("large_document.docx")]
+    public async Task ConvertAsync_StreamToStream_ComplexFixture_Succeeds(string fixture)
+    {
+        var converter = GetOrCreateConverter();
+        if (converter is null) return;
+        var fixturePath = TestHelpers.FindFixture(fixture);
+        if (fixturePath == null) return;
+
+        await using var inputFs = File.OpenRead(fixturePath);
+        using var outputMs = new MemoryStream();
+
+        var result = await converter.ConvertAsync(
+            inputFs, outputMs, DocumentFormat.Docx);
+
+        Assert.True(result.Success, $"Failed converting {fixture}: {result.ErrorMessage}");
+        Assert.True(outputMs.Length > 100, $"PDF too small for {fixture}: {outputMs.Length}");
+    }
+
+    // --- No temp directory tests ---
+
+    [Fact]
+    public async Task ConvertAsync_BufferRoundTrip_NoTempDirectoryCreated()
+    {
+        var converter = GetOrCreateConverter();
+        if (converter is null) return;
+        var testDocx = TestHelpers.FindTestDocx();
+        if (testDocx == null) return;
+
+        var tempDir = Path.Combine(Path.GetTempPath(), "slimlo");
+        if (Directory.Exists(tempDir))
+            Directory.Delete(tempDir, recursive: true);
+
+        var docxBytes = await File.ReadAllBytesAsync(testDocx);
+        var result = await converter.ConvertAsync(docxBytes.AsMemory(), DocumentFormat.Docx);
+
+        Assert.True(result.Success);
+        Assert.NotNull(result.Data);
+        Assert.True(result.Data!.Length > 100);
+        Assert.False(Directory.Exists(tempDir),
+            "slimlo temp directory should not be created for buffer conversions");
+    }
+
+    [Fact]
+    public async Task ConvertAsync_StreamToFile_NoTempDirectoryCreated()
+    {
+        var converter = GetOrCreateConverter();
+        if (converter is null) return;
+        var testDocx = TestHelpers.FindTestDocx();
+        if (testDocx == null) return;
+
+        var tempDir = Path.Combine(Path.GetTempPath(), "slimlo");
+        if (Directory.Exists(tempDir))
+            Directory.Delete(tempDir, recursive: true);
+
+        var output = Path.Combine(Path.GetTempPath(), $"slimlo_s2f_{Guid.NewGuid():N}.pdf");
+        try
+        {
+            var docxBytes = await File.ReadAllBytesAsync(testDocx);
+            using var inputMs = new MemoryStream(docxBytes);
+            var result = await converter.ConvertAsync(inputMs, output, DocumentFormat.Docx);
+
+            Assert.True(result.Success);
+            Assert.True(File.Exists(output));
+            Assert.False(Directory.Exists(tempDir),
+                "slimlo temp directory should not be created for stream→file conversions");
+        }
+        finally
+        {
+            if (File.Exists(output)) File.Delete(output);
+        }
+    }
+
+    // --- Buffer conversion with fixtures ---
+
+    [Theory]
+    [InlineData("multi_font.docx")]
+    [InlineData("rich_formatting.docx")]
+    [InlineData("unicode_text.docx")]
+    [InlineData("large_document.docx")]
+    public async Task ConvertAsync_Buffer_ComplexFixture_Succeeds(string fixture)
+    {
+        var converter = GetOrCreateConverter();
+        if (converter is null) return;
+        var fixturePath = TestHelpers.FindFixture(fixture);
+        if (fixturePath == null) return;
+
+        var docxBytes = await File.ReadAllBytesAsync(fixturePath);
+        var result = await converter.ConvertAsync(docxBytes.AsMemory(), DocumentFormat.Docx);
+
+        Assert.True(result.Success, $"Failed converting {fixture}: {result.ErrorMessage}");
+        Assert.NotNull(result.Data);
+        Assert.True(result.Data!.Length > 100, $"PDF too small for {fixture}: {result.Data.Length} bytes");
+        Assert.Equal((byte)'%', result.Data[0]);
+        Assert.Equal((byte)'P', result.Data[1]);
+        Assert.Equal((byte)'D', result.Data[2]);
+        Assert.Equal((byte)'F', result.Data[3]);
+    }
+
+    [Fact]
+    public async Task ConvertAsync_Buffer_MissingFontsFixture_StillConverts()
+    {
+        var converter = GetOrCreateConverter();
+        if (converter is null) return;
+        var fixturePath = TestHelpers.FindFixture("missing_fonts.docx");
+        if (fixturePath == null) return;
+
+        var docxBytes = await File.ReadAllBytesAsync(fixturePath);
+        var result = await converter.ConvertAsync(docxBytes.AsMemory(), DocumentFormat.Docx);
+
+        Assert.True(result.Success, $"Failed converting missing_fonts.docx: {result.ErrorMessage}");
+        Assert.NotNull(result.Data);
+        Assert.True(result.Data!.Length > 100);
+    }
+
+    // --- File → Stream with fixtures ---
+
+    [Theory]
+    [InlineData("multi_font.docx")]
+    [InlineData("rich_formatting.docx")]
+    [InlineData("unicode_text.docx")]
+    [InlineData("large_document.docx")]
+    public async Task ConvertAsync_FileToStream_ComplexFixture_Succeeds(string fixture)
+    {
+        var converter = GetOrCreateConverter();
+        if (converter is null) return;
+        var fixturePath = TestHelpers.FindFixture(fixture);
+        if (fixturePath == null) return;
+
+        using var outputMs = new MemoryStream();
+        var result = await converter.ConvertAsync(fixturePath, outputMs);
+
+        Assert.True(result.Success, $"Failed converting {fixture}: {result.ErrorMessage}");
+        Assert.True(outputMs.Length > 100, $"PDF too small for {fixture}: {outputMs.Length}");
+
+        outputMs.Position = 0;
+        var header = new byte[4];
+        await outputMs.ReadAsync(header);
+        Assert.Equal((byte)'%', header[0]);
+        Assert.Equal((byte)'P', header[1]);
+        Assert.Equal((byte)'D', header[2]);
+        Assert.Equal((byte)'F', header[3]);
+    }
+
+    // --- Stream → File with fixtures ---
+
+    [Theory]
+    [InlineData("multi_font.docx")]
+    [InlineData("rich_formatting.docx")]
+    [InlineData("unicode_text.docx")]
+    [InlineData("large_document.docx")]
+    public async Task ConvertAsync_StreamToFile_ComplexFixture_Succeeds(string fixture)
+    {
+        var converter = GetOrCreateConverter();
+        if (converter is null) return;
+        var fixturePath = TestHelpers.FindFixture(fixture);
+        if (fixturePath == null) return;
+
+        var output = Path.Combine(Path.GetTempPath(), $"slimlo_s2f_{Guid.NewGuid():N}.pdf");
+        try
+        {
+            var docxBytes = await File.ReadAllBytesAsync(fixturePath);
+            using var inputMs = new MemoryStream(docxBytes);
+            var result = await converter.ConvertAsync(inputMs, output, DocumentFormat.Docx);
+
+            Assert.True(result.Success, $"Failed converting {fixture}: {result.ErrorMessage}");
+            Assert.True(File.Exists(output), $"Output PDF not created for {fixture}");
+
+            var pdfBytes = await File.ReadAllBytesAsync(output);
+            Assert.True(pdfBytes.Length > 100, $"PDF too small for {fixture}: {pdfBytes.Length} bytes");
+            Assert.Equal((byte)'%', pdfBytes[0]);
+            Assert.Equal((byte)'P', pdfBytes[1]);
+        }
+        finally
+        {
+            if (File.Exists(output)) File.Delete(output);
+        }
+    }
+
+    // --- Barcode font via buffer/stream ---
+
+    [Fact]
+    public async Task ConvertAsync_Buffer_WithCustomBarcodeFont_Succeeds()
+    {
+        if (!TestHelpers.CanRunIntegration()) return;
+
+        var fixturePath = TestHelpers.FindFixture("barcode_font.docx");
+        if (fixturePath == null) return;
+
+        var fontDir = TestHelpers.FindFontDir();
+        if (fontDir == null) return;
+
+        await using var converter = PdfConverter.Create(new PdfConverterOptions
+        {
+            ResourcePath = TestHelpers.GetResourcePath(),
+            FontDirectories = [fontDir]
+        });
+
+        var docxBytes = await File.ReadAllBytesAsync(fixturePath);
+        var result = await converter.ConvertAsync(docxBytes.AsMemory(), DocumentFormat.Docx);
+
+        Assert.True(result.Success, $"Conversion failed: {result.ErrorMessage}");
+        Assert.NotNull(result.Data);
+        Assert.True(result.Data!.Length > 100, "PDF too small");
+
+        // PDF header check
+        Assert.Equal((byte)'%', result.Data[0]);
+        Assert.Equal((byte)'P', result.Data[1]);
+        Assert.Equal((byte)'D', result.Data[2]);
+        Assert.Equal((byte)'F', result.Data[3]);
+
+        // The barcode font should be embedded in the PDF
+        var pdfText = Encoding.ASCII.GetString(result.Data);
+        Assert.True(
+            pdfText.Contains("Barcode") || pdfText.Contains("barcode"),
+            "PDF should contain the barcode font when FontDirectories is set");
+    }
+
+    [Fact]
+    public async Task ConvertAsync_StreamToStream_WithCustomBarcodeFont_Succeeds()
+    {
+        if (!TestHelpers.CanRunIntegration()) return;
+
+        var fixturePath = TestHelpers.FindFixture("barcode_font.docx");
+        if (fixturePath == null) return;
+
+        var fontDir = TestHelpers.FindFontDir();
+        if (fontDir == null) return;
+
+        await using var converter = PdfConverter.Create(new PdfConverterOptions
+        {
+            ResourcePath = TestHelpers.GetResourcePath(),
+            FontDirectories = [fontDir]
+        });
+
+        var docxBytes = await File.ReadAllBytesAsync(fixturePath);
+        using var inputMs = new MemoryStream(docxBytes);
+        using var outputMs = new MemoryStream();
+
+        var result = await converter.ConvertAsync(inputMs, outputMs, DocumentFormat.Docx);
+
+        Assert.True(result.Success, $"Conversion failed: {result.ErrorMessage}");
+        Assert.True(outputMs.Length > 100, "PDF too small");
+
+        // The barcode font should be embedded
+        var pdfText = Encoding.ASCII.GetString(outputMs.ToArray());
+        Assert.True(
+            pdfText.Contains("Barcode") || pdfText.Contains("barcode"),
+            "PDF should contain the barcode font when FontDirectories is set");
+    }
+
+    // --- Concurrent stream conversions ---
+
+    [Fact]
+    public async Task ConvertAsync_ConcurrentStreamToStream_AllSucceed()
+    {
+        if (!TestHelpers.CanRunIntegration()) return;
+        var testDocx = TestHelpers.FindTestDocx();
+        if (testDocx == null) return;
+
+        await using var converter = PdfConverter.Create(new PdfConverterOptions
+        {
+            ResourcePath = TestHelpers.GetResourcePath(),
+            MaxWorkers = 1
+        });
+
+        var docxBytes = await File.ReadAllBytesAsync(testDocx);
+        var tasks = new Task<ConversionResult>[3];
+        var outputs = new MemoryStream[3];
+
+        for (int i = 0; i < 3; i++)
+        {
+            outputs[i] = new MemoryStream();
+            var input = new MemoryStream(docxBytes);
+            var output = outputs[i];
+            tasks[i] = converter.ConvertAsync(input, output, DocumentFormat.Docx);
+        }
+
+        var results = await Task.WhenAll(tasks);
+
+        foreach (var result in results)
+            Assert.True(result.Success, $"Concurrent stream conversion failed: {result.ErrorMessage}");
+
+        foreach (var output in outputs)
+        {
+            Assert.True(output.Length > 100);
+            output.Dispose();
+        }
+    }
+}
+

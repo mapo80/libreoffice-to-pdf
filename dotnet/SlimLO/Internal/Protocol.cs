@@ -10,10 +10,20 @@ namespace SlimLO.Internal;
 /// </summary>
 internal static class Protocol
 {
-    private const int MaxMessageSize = 16 * 1024 * 1024; // 16 MB
+    private const int MaxMessageSize = 256 * 1024 * 1024; // 256 MB (documents can be large)
 
-    /// <summary>Write a length-prefixed JSON message to a stream.</summary>
+    /// <summary>Write a length-prefixed message to a stream (byte array).</summary>
     public static async Task WriteMessageAsync(Stream stream, byte[] payload, CancellationToken ct)
+    {
+        var lengthBytes = new byte[4];
+        BinaryPrimitives.WriteUInt32LittleEndian(lengthBytes, (uint)payload.Length);
+        await stream.WriteAsync(lengthBytes, ct).ConfigureAwait(false);
+        await stream.WriteAsync(payload, ct).ConfigureAwait(false);
+        await stream.FlushAsync(ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Write a length-prefixed binary frame to a stream (ReadOnlyMemory, avoids copying).</summary>
+    public static async Task WriteMessageAsync(Stream stream, ReadOnlyMemory<byte> payload, CancellationToken ct)
     {
         var lengthBytes = new byte[4];
         BinaryPrimitives.WriteUInt32LittleEndian(lengthBytes, (uint)payload.Length);
@@ -144,6 +154,25 @@ internal sealed class ConvertRequestOptions
     }
 }
 
+internal sealed class ConvertBufferRequest
+{
+    [JsonPropertyName("type")]
+    public string Type => "convert_buffer";
+
+    [JsonPropertyName("id")]
+    public int Id { get; init; }
+
+    [JsonPropertyName("format")]
+    public int Format { get; init; }
+
+    [JsonPropertyName("data_size")]
+    public long DataSize { get; init; }
+
+    [JsonPropertyName("options")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ConvertRequestOptions? Options { get; init; }
+}
+
 internal sealed class QuitRequest
 {
     [JsonPropertyName("type")]
@@ -158,6 +187,7 @@ internal sealed class QuitRequest
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 [JsonSerializable(typeof(InitRequest))]
 [JsonSerializable(typeof(ConvertRequest))]
+[JsonSerializable(typeof(ConvertBufferRequest))]
 [JsonSerializable(typeof(ConvertRequestOptions))]
 [JsonSerializable(typeof(QuitRequest))]
 internal partial class ProtocolJsonContext : JsonSerializerContext

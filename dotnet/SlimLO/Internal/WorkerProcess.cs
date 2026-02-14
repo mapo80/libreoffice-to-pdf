@@ -226,6 +226,110 @@ internal sealed class WorkerProcess : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Execute a buffer conversion. Sends document bytes, receives PDF bytes.
+    /// The caller must hold the pool semaphore.
+    /// </summary>
+    public async Task<ConversionResult<byte[]>> ConvertBufferAsync(
+        ConvertBufferRequest request,
+        ReadOnlyMemory<byte> documentData,
+        TimeSpan timeout,
+        CancellationToken ct)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (!_initialized || _process is null or { HasExited: true })
+            return ConversionResult<byte[]>.Fail(
+                "Worker process is not running",
+                SlimLOErrorCode.NotInitialized, null);
+
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            lock (_stderrBuffer)
+                _stderrBuffer.Clear();
+
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(timeout);
+            var linkedCt = timeoutCts.Token;
+
+            try
+            {
+                var stdin = _process.StandardInput.BaseStream;
+                var stdout = _process.StandardOutput.BaseStream;
+
+                // Send JSON header frame
+                var requestBytes = Protocol.Serialize(request);
+                await Protocol.WriteMessageAsync(stdin, requestBytes, linkedCt).ConfigureAwait(false);
+
+                // Send binary document frame
+                await Protocol.WriteMessageAsync(stdin, documentData, linkedCt).ConfigureAwait(false);
+
+                // Read JSON response frame
+                var responseBytes = await Protocol.ReadMessageAsync(stdout, linkedCt).ConfigureAwait(false);
+
+                if (responseBytes is null)
+                {
+                    var exitCode = _process.HasExited ? _process.ExitCode : -1;
+                    _initialized = false;
+                    return ConversionResult<byte[]>.Fail(
+                        $"Worker process crashed during buffer conversion (exit code: {exitCode}). " +
+                        "This typically indicates a malformed or corrupted document.",
+                        SlimLOErrorCode.Unknown, null);
+                }
+
+                using var doc = Protocol.Deserialize(responseBytes);
+                var root = doc.RootElement;
+
+                var diagnostics = root.TryGetProperty("diagnostics", out var diagArray)
+                    ? StderrDiagnosticParser.ParseFromJson(diagArray)
+                    : Array.Empty<ConversionDiagnostic>();
+
+                var success = root.TryGetProperty("success", out var s) && s.GetBoolean();
+
+                if (success)
+                {
+                    // Read binary PDF frame
+                    var pdfBytes = await Protocol.ReadMessageAsync(stdout, linkedCt).ConfigureAwait(false);
+                    if (pdfBytes is null)
+                    {
+                        _initialized = false;
+                        return ConversionResult<byte[]>.Fail(
+                            "Worker process crashed while sending PDF data",
+                            SlimLOErrorCode.Unknown, diagnostics);
+                    }
+
+                    Interlocked.Increment(ref _conversionCount);
+                    return ConversionResult<byte[]>.Ok(pdfBytes, diagnostics);
+                }
+                else
+                {
+                    var errorMessage = root.TryGetProperty("error_message", out var em)
+                        ? em.GetString() ?? "Buffer conversion failed"
+                        : "Buffer conversion failed";
+                    var errorCode = root.TryGetProperty("error_code", out var ec) && ec.ValueKind == JsonValueKind.Number
+                        ? (SlimLOErrorCode)ec.GetInt32()
+                        : SlimLOErrorCode.Unknown;
+
+                    Interlocked.Increment(ref _conversionCount);
+                    return ConversionResult<byte[]>.Fail(errorMessage, errorCode, diagnostics);
+                }
+            }
+            catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
+            {
+                KillProcess();
+                _initialized = false;
+                return ConversionResult<byte[]>.Fail(
+                    $"Buffer conversion timed out after {timeout.TotalSeconds:F0} seconds",
+                    SlimLOErrorCode.Unknown, null);
+            }
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
     private void OnStderrData(object sender, DataReceivedEventArgs e)
     {
         if (e.Data is null) return;

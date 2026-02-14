@@ -19,6 +19,17 @@ namespace SlimLO;
 /// <see cref="PdfConverterOptions.FontDirectories"/>. Font substitution warnings
 /// are reported in <see cref="ConversionResult.Diagnostics"/>.</para>
 ///
+/// <para><b>Conversion modes:</b> The converter uses two IPC strategies depending on the overload:
+/// <list type="bullet">
+/// <item><b>File-path mode</b> — <see cref="ConvertAsync(string, string, ConversionOptions?, CancellationToken)"/>
+/// sends only file paths to the worker. The worker reads/writes files directly via LibreOffice's
+/// <c>file://</c> URLs. The .NET process never loads document or PDF bytes into memory.
+/// Best for batch processing and large files.</item>
+/// <item><b>Buffer mode</b> — All other overloads send document bytes as binary frames over the
+/// IPC pipe. LibreOffice loads via <c>private:stream</c> (pure in-memory, zero disk I/O) and
+/// returns PDF bytes the same way. Best for web servers and in-memory pipelines.</item>
+/// </list></para>
+///
 /// <example>
 /// <code>
 /// await using var converter = PdfConverter.Create(new PdfConverterOptions
@@ -27,10 +38,16 @@ namespace SlimLO;
 ///     MaxWorkers = 2
 /// });
 ///
+/// // File to file
 /// var result = await converter.ConvertAsync("input.docx", "output.pdf");
-/// if (result.HasFontWarnings)
-///     foreach (var d in result.Diagnostics)
-///         Console.WriteLine($"  {d.Severity}: {d.Message}");
+///
+/// // Stream to stream (e.g., ASP.NET controller)
+/// var result = await converter.ConvertAsync(
+///     Request.Body, Response.Body, DocumentFormat.Docx);
+///
+/// // Buffer to buffer
+/// var result = await converter.ConvertAsync(docxBytes, DocumentFormat.Docx);
+/// byte[] pdf = result.Data;
 /// </code>
 /// </example>
 /// </summary>
@@ -95,6 +112,13 @@ public sealed class PdfConverter : IAsyncDisposable, IDisposable
     /// or use implicit bool conversion. Call <see cref="ConversionResult.ThrowIfFailed"/>
     /// to throw on failure.
     /// </returns>
+    /// <remarks>
+    /// Uses <b>file-path IPC</b>: only file paths are sent to the worker process.
+    /// The worker reads the input and writes the PDF directly — the .NET process never
+    /// loads the document or PDF bytes into memory. This is the most memory-efficient
+    /// overload and is recommended for batch processing and large files.
+    /// The document format is auto-detected from the file extension.
+    /// </remarks>
     public async Task<ConversionResult> ConvertAsync(
         string inputPath,
         string outputPath,
@@ -139,6 +163,12 @@ public sealed class PdfConverter : IAsyncDisposable, IDisposable
     /// Conversion result with PDF bytes in <see cref="ConversionResult{T}.Data"/>.
     /// Data is null if conversion failed.
     /// </returns>
+    /// <remarks>
+    /// Uses <b>buffer IPC</b>: document bytes are sent as binary frames to the worker, which
+    /// loads them via LibreOffice's <c>private:stream</c> (pure in-memory, zero disk I/O).
+    /// PDF bytes are returned the same way. Both input and output are held in .NET memory.
+    /// Ideal for in-memory pipelines (database blobs, message queues, blob storage).
+    /// </remarks>
     public async Task<ConversionResult<byte[]>> ConvertAsync(
         ReadOnlyMemory<byte> input,
         DocumentFormat format,
@@ -157,45 +187,144 @@ public sealed class PdfConverter : IAsyncDisposable, IDisposable
                 "Format must be specified for buffer conversion",
                 SlimLOErrorCode.InvalidFormat, null);
 
-        var ext = format switch
-        {
-            DocumentFormat.Docx => ".docx",
-            DocumentFormat.Xlsx => ".xlsx",
-            DocumentFormat.Pptx => ".pptx",
-            _ => ".tmp"
-        };
+        return await ConvertBufferCoreAsync(input, format, options, cancellationToken)
+            .ConfigureAwait(false);
+    }
 
-        var tempDir = Path.Combine(Path.GetTempPath(), "slimlo");
-        Directory.CreateDirectory(tempDir);
+    /// <summary>
+    /// Convert a document stream to PDF, writing to an output stream.
+    /// </summary>
+    /// <param name="input">Readable stream containing input document bytes.</param>
+    /// <param name="output">Writable stream where PDF bytes will be written.</param>
+    /// <param name="format">Document format (required — cannot auto-detect from a stream).</param>
+    /// <param name="options">PDF conversion options. Null for defaults.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Conversion result with diagnostics. PDF bytes are written to <paramref name="output"/>.</returns>
+    /// <remarks>
+    /// Uses <b>buffer IPC</b>: the input stream is fully read into memory, sent as binary frames
+    /// to the worker, and the resulting PDF bytes are written to the output stream.
+    /// No temporary files are created. Ideal for ASP.NET controllers piping
+    /// <c>Request.Body</c> to <c>Response.Body</c>.
+    /// </remarks>
+    public async Task<ConversionResult> ConvertAsync(
+        Stream input,
+        Stream output,
+        DocumentFormat format,
+        ConversionOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(input);
+        ArgumentNullException.ThrowIfNull(output);
 
-        var tempInput = Path.Combine(tempDir, $"{Guid.NewGuid():N}{ext}");
-        var tempOutput = Path.Combine(tempDir, $"{Guid.NewGuid():N}.pdf");
+        if (!input.CanRead)
+            return ConversionResult.Fail("Input stream is not readable",
+                SlimLOErrorCode.InvalidArgument, null);
+        if (!output.CanWrite)
+            return ConversionResult.Fail("Output stream is not writable",
+                SlimLOErrorCode.InvalidArgument, null);
+        if (format == DocumentFormat.Unknown)
+            return ConversionResult.Fail("Format must be specified for stream conversion",
+                SlimLOErrorCode.InvalidFormat, null);
 
-        try
-        {
-            await File.WriteAllBytesAsync(tempInput, input.ToArray(), cancellationToken)
+        var inputBytes = await ReadStreamToMemoryAsync(input, cancellationToken).ConfigureAwait(false);
+        var result = await ConvertBufferCoreAsync(inputBytes, format, options, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (result.Success && result.Data is not null)
+            await output.WriteAsync(result.Data, cancellationToken).ConfigureAwait(false);
+
+        return result.AsBase();
+    }
+
+    /// <summary>
+    /// Convert a document stream to a PDF file.
+    /// </summary>
+    /// <param name="input">Readable stream containing input document bytes.</param>
+    /// <param name="outputPath">Path for output PDF file.</param>
+    /// <param name="format">Document format (required — cannot auto-detect from a stream).</param>
+    /// <param name="options">PDF conversion options. Null for defaults.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Conversion result with diagnostics.</returns>
+    /// <remarks>
+    /// Uses <b>buffer IPC</b>: the input stream is read into memory, converted via binary
+    /// IPC, and the resulting PDF bytes are written to disk. No temporary files are created
+    /// during conversion — only the final output file is written.
+    /// </remarks>
+    public async Task<ConversionResult> ConvertAsync(
+        Stream input,
+        string outputPath,
+        DocumentFormat format,
+        ConversionOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(input);
+        ArgumentException.ThrowIfNullOrEmpty(outputPath);
+
+        if (!input.CanRead)
+            return ConversionResult.Fail("Input stream is not readable",
+                SlimLOErrorCode.InvalidArgument, null);
+        if (format == DocumentFormat.Unknown)
+            return ConversionResult.Fail("Format must be specified for stream conversion",
+                SlimLOErrorCode.InvalidFormat, null);
+
+        var inputBytes = await ReadStreamToMemoryAsync(input, cancellationToken).ConfigureAwait(false);
+        var result = await ConvertBufferCoreAsync(inputBytes, format, options, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (result.Success && result.Data is not null)
+            await File.WriteAllBytesAsync(outputPath, result.Data, cancellationToken)
                 .ConfigureAwait(false);
 
-            var result = await ConvertAsync(tempInput, tempOutput, options, cancellationToken)
-                .ConfigureAwait(false);
+        return result.AsBase();
+    }
 
-            if (result.Success && File.Exists(tempOutput))
-            {
-                var pdfBytes = await File.ReadAllBytesAsync(tempOutput, cancellationToken)
-                    .ConfigureAwait(false);
-                return ConversionResult<byte[]>.Ok(pdfBytes, result.Diagnostics);
-            }
+    /// <summary>
+    /// Convert a document file to PDF, writing to an output stream.
+    /// </summary>
+    /// <param name="inputPath">Path to input document (.docx, .xlsx, .pptx).</param>
+    /// <param name="output">Writable stream where PDF bytes will be written.</param>
+    /// <param name="options">PDF conversion options. Null for defaults.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Conversion result with diagnostics. PDF bytes are written to <paramref name="output"/>.</returns>
+    /// <remarks>
+    /// Uses <b>buffer IPC</b>: the input file is read into .NET memory, sent as binary frames
+    /// to the worker, and the resulting PDF bytes are written to the output stream.
+    /// For large files where the output must be a stream, consider using the file-to-file
+    /// overload and then reading the output file separately.
+    /// </remarks>
+    public async Task<ConversionResult> ConvertAsync(
+        string inputPath,
+        Stream output,
+        ConversionOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentException.ThrowIfNullOrEmpty(inputPath);
+        ArgumentNullException.ThrowIfNull(output);
 
-            return ConversionResult<byte[]>.Fail(
-                result.ErrorMessage ?? "Conversion failed",
-                result.ErrorCode ?? SlimLOErrorCode.Unknown,
-                result.Diagnostics);
-        }
-        finally
-        {
-            try { File.Delete(tempInput); } catch { /* best effort */ }
-            try { File.Delete(tempOutput); } catch { /* best effort */ }
-        }
+        if (!output.CanWrite)
+            return ConversionResult.Fail("Output stream is not writable",
+                SlimLOErrorCode.InvalidArgument, null);
+
+        inputPath = Path.GetFullPath(inputPath);
+
+        if (!File.Exists(inputPath))
+            return ConversionResult.Fail(
+                $"Input file not found: {inputPath}",
+                SlimLOErrorCode.FileNotFound, null);
+
+        var format = DetectFormat(inputPath);
+        var inputBytes = await File.ReadAllBytesAsync(inputPath, cancellationToken)
+            .ConfigureAwait(false);
+        var result = await ConvertBufferCoreAsync(inputBytes, format, options, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (result.Success && result.Data is not null)
+            await output.WriteAsync(result.Data, cancellationToken).ConfigureAwait(false);
+
+        return result.AsBase();
     }
 
     /// <summary>
@@ -243,5 +372,37 @@ public sealed class PdfConverter : IAsyncDisposable, IDisposable
             ".pptx" => DocumentFormat.Pptx,
             _ => DocumentFormat.Unknown
         };
+    }
+
+    /// <summary>Core buffer conversion via binary IPC (no temp files).</summary>
+    private async Task<ConversionResult<byte[]>> ConvertBufferCoreAsync(
+        ReadOnlyMemory<byte> input,
+        DocumentFormat format,
+        ConversionOptions? options,
+        CancellationToken ct)
+    {
+        var requestId = Interlocked.Increment(ref _requestId);
+        var request = new ConvertBufferRequest
+        {
+            Id = requestId,
+            Format = (int)format,
+            DataSize = input.Length,
+            Options = ConvertRequestOptions.FromConversionOptions(options)
+        };
+
+        return await _pool.ExecuteBufferAsync(request, input, ct).ConfigureAwait(false);
+    }
+
+    private static async Task<ReadOnlyMemory<byte>> ReadStreamToMemoryAsync(
+        Stream stream, CancellationToken ct)
+    {
+        if (stream is MemoryStream ms && ms.TryGetBuffer(out var segment))
+        {
+            return segment.AsMemory()[(int)(ms.Position - segment.Offset)..];
+        }
+
+        using var buffer = new MemoryStream();
+        await stream.CopyToAsync(buffer, ct).ConfigureAwait(false);
+        return buffer.ToArray();
     }
 }

@@ -56,8 +56,8 @@
 /* Maximum stderr capture buffer: 256 KB per conversion */
 #define STDERR_BUF_SIZE (256 * 1024)
 
-/* Maximum message size: 16 MB */
-#define MAX_MSG_SIZE (16 * 1024 * 1024)
+/* Maximum message size: 256 MB (documents can be large for buffer conversions) */
+#define MAX_MSG_SIZE (256 * 1024 * 1024)
 
 /* --------------------------------------------------------------------------
  * Binary I/O helpers
@@ -574,6 +574,140 @@ static int handle_convert(cJSON* msg) {
     return send_json(resp);
 }
 
+static int handle_convert_buffer(cJSON* msg) {
+    cJSON* id_json = cJSON_GetObjectItem(msg, "id");
+    int id = id_json && cJSON_IsNumber(id_json) ? id_json->valueint : 0;
+
+    cJSON* format_json = cJSON_GetObjectItem(msg, "format");
+    int format = format_json && cJSON_IsNumber(format_json) ? format_json->valueint : 0;
+
+    cJSON* data_size_json = cJSON_GetObjectItem(msg, "data_size");
+    if (!data_size_json || !cJSON_IsNumber(data_size_json)) {
+        cJSON* resp = cJSON_CreateObject();
+        cJSON_AddStringToObject(resp, "type", "buffer_result");
+        cJSON_AddNumberToObject(resp, "id", id);
+        cJSON_AddBoolToObject(resp, "success", 0);
+        cJSON_AddNumberToObject(resp, "error_code", SLIMLO_ERROR_INVALID_ARGUMENT);
+        cJSON_AddStringToObject(resp, "error_message", "Missing data_size in convert_buffer");
+        cJSON_AddItemToObject(resp, "diagnostics", cJSON_CreateArray());
+        return send_json(resp);
+    }
+
+    size_t data_size = (size_t)cJSON_GetNumberValue(data_size_json);
+
+    /* Parse options (same as handle_convert) */
+    SlimLOPdfOptions opts;
+    memset(&opts, 0, sizeof(opts));
+    const SlimLOPdfOptions* opts_ptr = NULL;
+
+    cJSON* options = cJSON_GetObjectItem(msg, "options");
+    if (options && cJSON_IsObject(options)) {
+        cJSON* pv = cJSON_GetObjectItem(options, "pdf_version");
+        if (pv && cJSON_IsNumber(pv)) opts.pdf_version = (SlimLOPdfVersion)pv->valueint;
+
+        cJSON* jq = cJSON_GetObjectItem(options, "jpeg_quality");
+        if (jq && cJSON_IsNumber(jq)) opts.jpeg_quality = jq->valueint;
+
+        cJSON* dpi = cJSON_GetObjectItem(options, "dpi");
+        if (dpi && cJSON_IsNumber(dpi)) opts.dpi = dpi->valueint;
+
+        cJSON* tp = cJSON_GetObjectItem(options, "tagged_pdf");
+        if (tp) opts.tagged_pdf = cJSON_IsTrue(tp) ? 1 : 0;
+
+        cJSON* pr = cJSON_GetObjectItem(options, "page_range");
+        if (pr && cJSON_IsString(pr)) opts.page_range = pr->valuestring;
+
+        cJSON* pw = cJSON_GetObjectItem(options, "password");
+        if (pw && cJSON_IsString(pw)) opts.password = pw->valuestring;
+
+        opts_ptr = &opts;
+    }
+
+    /* Read the binary document frame (second length-prefixed frame) */
+    size_t frame_len = 0;
+    char* doc_buf = read_message(&frame_len);
+    if (!doc_buf) {
+        cJSON* resp = cJSON_CreateObject();
+        cJSON_AddStringToObject(resp, "type", "buffer_result");
+        cJSON_AddNumberToObject(resp, "id", id);
+        cJSON_AddBoolToObject(resp, "success", 0);
+        cJSON_AddNumberToObject(resp, "error_code", SLIMLO_ERROR_INVALID_ARGUMENT);
+        cJSON_AddStringToObject(resp, "error_message", "Failed to read document data frame");
+        cJSON_AddItemToObject(resp, "diagnostics", cJSON_CreateArray());
+        return send_json(resp);
+    }
+
+    if (frame_len != data_size) {
+        free(doc_buf);
+        cJSON* resp = cJSON_CreateObject();
+        cJSON_AddStringToObject(resp, "type", "buffer_result");
+        cJSON_AddNumberToObject(resp, "id", id);
+        cJSON_AddBoolToObject(resp, "success", 0);
+        cJSON_AddNumberToObject(resp, "error_code", SLIMLO_ERROR_INVALID_ARGUMENT);
+        cJSON_AddStringToObject(resp, "error_message", "Data frame size mismatch");
+        cJSON_AddItemToObject(resp, "diagnostics", cJSON_CreateArray());
+        return send_json(resp);
+    }
+
+    /* Start stderr capture */
+    stderr_capture_start();
+
+    /* Perform buffer conversion */
+    uint8_t* pdf_buf = NULL;
+    size_t pdf_size = 0;
+    SlimLOError err = slimlo_convert_buffer(
+        g_handle,
+        (const uint8_t*)doc_buf, frame_len,
+        (SlimLOFormat)format,
+        opts_ptr,
+        &pdf_buf, &pdf_size
+    );
+
+    free(doc_buf);
+
+    /* Capture stderr and restore */
+    stderr_capture_stop();
+    size_t stderr_len = stderr_capture_read();
+
+    /* Parse diagnostics from captured stderr */
+    cJSON* diagnostics = parse_diagnostics(stderr_len > 0 ? stderr_buf : NULL);
+
+    /* Build response */
+    cJSON* resp = cJSON_CreateObject();
+    cJSON_AddStringToObject(resp, "type", "buffer_result");
+    cJSON_AddNumberToObject(resp, "id", id);
+
+    if (err == SLIMLO_OK && pdf_buf) {
+        cJSON_AddBoolToObject(resp, "success", 1);
+        cJSON_AddNumberToObject(resp, "data_size", (double)pdf_size);
+        cJSON_AddNullToObject(resp, "error_code");
+        cJSON_AddNullToObject(resp, "error_message");
+    } else {
+        cJSON_AddBoolToObject(resp, "success", 0);
+        cJSON_AddNumberToObject(resp, "error_code", (int)err);
+        const char* errmsg = slimlo_get_error_message(g_handle);
+        cJSON_AddStringToObject(resp, "error_message", errmsg ? errmsg : "Buffer conversion failed");
+    }
+
+    cJSON_AddItemToObject(resp, "diagnostics", diagnostics);
+
+    /* Send JSON response frame */
+    int rc = send_json(resp);
+    if (rc != 0) {
+        slimlo_free_buffer(pdf_buf);
+        return rc;
+    }
+
+    /* Send binary PDF frame (only on success) */
+    if (err == SLIMLO_OK && pdf_buf) {
+        rc = write_message((const char*)pdf_buf, pdf_size);
+        slimlo_free_buffer(pdf_buf);
+        return rc;
+    }
+
+    return 0;
+}
+
 /* --------------------------------------------------------------------------
  * Main loop
  * -------------------------------------------------------------------------- */
@@ -654,6 +788,21 @@ int main(void) {
                 continue;
             }
             int rc = handle_convert(msg);
+            cJSON_Delete(msg);
+            if (rc != 0) break;
+        } else if (strcmp(type_str, "convert_buffer") == 0) {
+            if (!g_handle) {
+                cJSON* resp = cJSON_CreateObject();
+                cJSON_AddStringToObject(resp, "type", "buffer_result");
+                cJSON_AddBoolToObject(resp, "success", 0);
+                cJSON_AddNumberToObject(resp, "error_code", SLIMLO_ERROR_NOT_INIT);
+                cJSON_AddStringToObject(resp, "error_message", "Worker not initialized");
+                cJSON_AddItemToObject(resp, "diagnostics", cJSON_CreateArray());
+                send_json(resp);
+                cJSON_Delete(msg);
+                continue;
+            }
+            int rc = handle_convert_buffer(msg);
             cJSON_Delete(msg);
             if (rc != 0) break;
         } else if (strcmp(type_str, "quit") == 0) {

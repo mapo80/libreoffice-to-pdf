@@ -116,6 +116,60 @@ internal sealed class WorkerPool : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Execute a buffer conversion on the next available worker.
+    /// Thread-safe: multiple threads can call this concurrently.
+    /// </summary>
+    public async Task<ConversionResult<byte[]>> ExecuteBufferAsync(
+        ConvertBufferRequest request,
+        ReadOnlyMemory<byte> documentData,
+        CancellationToken ct)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            int index = (int)((uint)Interlocked.Increment(ref _nextWorkerIndex) % (uint)_maxWorkers);
+
+            await EnsureWorkerAsync(index, ct).ConfigureAwait(false);
+
+            var worker = _workers[index];
+            if (worker is null)
+                return ConversionResult<byte[]>.Fail("Failed to start worker", SlimLOErrorCode.InitFailed, null);
+
+            var result = await worker.ConvertBufferAsync(request, documentData, _timeout, ct).ConfigureAwait(false);
+
+            if (_maxConversionsPerWorker > 0 && worker.ConversionCount >= _maxConversionsPerWorker)
+            {
+                await RecycleWorkerAsync(index).ConfigureAwait(false);
+            }
+
+            if (!worker.IsAlive)
+            {
+                await _workerLocks[index].WaitAsync(ct).ConfigureAwait(false);
+                try
+                {
+                    if (_workers[index] == worker)
+                    {
+                        await worker.DisposeAsync().ConfigureAwait(false);
+                        _workers[index] = null;
+                    }
+                }
+                finally
+                {
+                    _workerLocks[index].Release();
+                }
+            }
+
+            return result;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     private async Task EnsureWorkerAsync(int index, CancellationToken ct)
     {
         if (_workers[index] is { IsAlive: true })
