@@ -5,6 +5,7 @@
 # Fixes:
 # 1) Ensure NSS build target uses LibreOffice autoconf wrappers on MSC.
 # 2) Keep existing LIB env as fallback when ILIB is empty/partial.
+# 3) Clear leaked compiler flag env vars before invoking nss make.
 set -euo pipefail
 
 LO_SRC="${1:?Missing LO source dir}"
@@ -52,3 +53,11 @@ else
     echo "    Patched NSS LIB env to preserve existing LIB fallback"
 fi
 
+if grep -Fq 'CL= CFLAGS= CXXFLAGS= CPPFLAGS= LDFLAGS= $(MAKE) nss_build_all' "$TARGET"; then
+    echo "    NSS make env cleanup already patched (skipping)"
+else
+    sed 's/$(MAKE) nss_build_all/CL= CFLAGS= CXXFLAGS= CPPFLAGS= LDFLAGS= $(MAKE) nss_build_all/' \
+        "$TARGET" > "$TARGET.tmp"
+    mv "$TARGET.tmp" "$TARGET"
+    echo "    Patched NSS build to clear CL/CFLAGS/CXXFLAGS/CPPFLAGS/LDFLAGS"
+fi
