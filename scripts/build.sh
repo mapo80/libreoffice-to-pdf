@@ -9,6 +9,7 @@ LO_VERSION="$(cat "$PROJECT_DIR/LO_VERSION" | tr -d '[:space:]')"
 LO_SRC_DIR="${LO_SRC_DIR:-$PROJECT_DIR/lo-src}"
 OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_DIR/output}"
 NPROC="${NPROC:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
+DOCX_AGGRESSIVE="${DOCX_AGGRESSIVE:-0}"
 
 # Detect platform
 case "$(uname -s)" in
@@ -164,7 +165,7 @@ if [ "$PLATFORM" = "windows" ]; then
             WIN_PYTHON="$(command -v python.exe 2>/dev/null || true)"
             case "$WIN_PYTHON" in
                 ""|/usr/bin/*|/mingw*/*)
-                    for candidate in /c/hostedtoolcache/windows/Python/*/x64/python.exe /c/Python*/python.exe; do
+                    for candidate in /c/hostedtoolcache/windows/Python/*/x64/python.exe /c/hostedtoolcache/windows/Python/*/arm64/python.exe /c/Users/*/AppData/Local/Programs/Python/Python3*/python.exe "/c/Program Files/Python3"*/python.exe /c/Python*/python.exe; do
                         [ -x "$candidate" ] || continue
                         WIN_PYTHON="$candidate"
                         break
@@ -189,17 +190,29 @@ if [ -n "$PYTHON_BUILD_BIN" ]; then
     export PYTHON="${PYTHON:-$PYTHON_BUILD_BIN}"
 fi
 if [ "$PLATFORM" = "windows" ]; then
-    NASM_BIN="${NASM:-}"
-    if [ -z "$NASM_BIN" ]; then
-        NASM_BIN="$(command -v nasm 2>/dev/null || command -v nasm.exe 2>/dev/null || true)"
-    fi
-    if [ -z "$NASM_BIN" ]; then
-        echo "ERROR: nasm not found. Install it and ensure it is available in PATH."
-        exit 1
-    fi
-    export NASM="$NASM_BIN"
-    echo "    Using NASM=$NASM"
-    "$NASM" -v || true
+    WIN_ARCH="$(uname -m 2>/dev/null || echo unknown)"
+    case "$WIN_ARCH" in
+        x86_64|i686)
+            # NASM required for x86/x64 SIMD (libjpeg-turbo assembly)
+            NASM_BIN="${NASM:-}"
+            if [ -z "$NASM_BIN" ]; then
+                NASM_BIN="$(command -v nasm 2>/dev/null || command -v nasm.exe 2>/dev/null || true)"
+            fi
+            if [ -z "$NASM_BIN" ]; then
+                echo "ERROR: nasm not found. Install it and ensure it is available in PATH."
+                exit 1
+            fi
+            export NASM="$NASM_BIN"
+            echo "    Using NASM=$NASM"
+            "$NASM" -v || true
+            ;;
+        aarch64|arm64)
+            echo "    ARM64 detected — NASM not required"
+            ;;
+        *)
+            echo "    Unknown architecture $WIN_ARCH — skipping NASM check"
+            ;;
+    esac
 fi
 if [ "$PLATFORM" = "windows" ]; then
     VISUAL_STUDIO_YEAR="${SLIMLO_VISUAL_STUDIO_YEAR:-2022}"
@@ -267,13 +280,14 @@ echo ""
 # -----------------------------------------------------------
 # Step 6: Extract minimal artifacts
 # -----------------------------------------------------------
-echo ">>> Step 6: Extracting artifacts..."
+echo ">>> Step 6: Extracting artifacts (DOCX_AGGRESSIVE=$DOCX_AGGRESSIVE)..."
 cd "$PROJECT_DIR"
 case "$PLATFORM" in
     macos) INSTDIR_ROOT="$LO_SRC_DIR/instdir/LibreOffice.app/Contents" ;;
     *)     INSTDIR_ROOT="$LO_SRC_DIR/instdir" ;;
 esac
-"$SCRIPT_DIR/extract-artifacts.sh" "$INSTDIR_ROOT" "$OUTPUT_DIR"
+DOCX_AGGRESSIVE="$DOCX_AGGRESSIVE" \
+    "$SCRIPT_DIR/extract-artifacts.sh" "$INSTDIR_ROOT" "$OUTPUT_DIR"
 echo ""
 
 # -----------------------------------------------------------
