@@ -69,10 +69,25 @@ jobs:
           PKG_CONFIG: /usr/local/bin/pkgconf-2.4.3.exe
         run: |
           cd /d/a/${{ github.event.repository.name }}/${{ github.event.repository.name }}
+          mkdir -p .ci-debug
+          env | sort > .ci-debug/env.before-build.txt
           export PATH="/usr/local/bin:$PATH:/mingw64/bin"
+          env | sort > .ci-debug/env.after-path.txt
           [ -f "$PWD/icu-filter.json" ] || (echo "icu-filter.json not found in workspace: $PWD/icu-filter.json" && exit 1)
           export ICU_DATA_FILTER_FILE="$(cygpath -m "$PWD/icu-filter.json")"
           echo "Using ICU_DATA_FILTER_FILE=$ICU_DATA_FILTER_FILE"
+          {
+            echo "CL=${CL:-}"
+            echo "CFLAGS=${CFLAGS:-}"
+            echo "CXXFLAGS=${CXXFLAGS:-}"
+            echo "CPPFLAGS=${CPPFLAGS:-}"
+            echo "LDFLAGS=${LDFLAGS:-}"
+            echo "CC=${CC:-}"
+            echo "CXX=${CXX:-}"
+            echo "INCLUDE=${INCLUDE:-}"
+            echo "LIB=${LIB:-}"
+            echo "PATH=$PATH"
+          } > .ci-debug/toolchain-env.txt
           NASM_BIN="$(command -v nasm || command -v nasm.exe || true)"
           [ -n "$NASM_BIN" ] || (echo "nasm not found in PATH" && exit 1)
           export NASM="$NASM_BIN"
@@ -134,6 +149,18 @@ jobs:
             echo "NSPR config.log not found: $NSPR_LOG"
           fi
 
+      - name: Dump NSS build.log (failure)
+        if: failure()
+        shell: msys2 {0}
+        run: |
+          NSS_BUILD_LOG="/d/lo-src/workdir/UnpackedTarball/nss/build.log"
+          if [ -f "$NSS_BUILD_LOG" ]; then
+            echo "Found $NSS_BUILD_LOG"
+            tail -n 200 "$NSS_BUILD_LOG"
+          else
+            echo "NSS build.log not found: $NSS_BUILD_LOG"
+          fi
+
       - name: Upload ICU config.log (failure)
         if: failure()
         uses: actions/upload-artifact@v4
@@ -148,6 +175,18 @@ jobs:
         with:
           name: nspr-config-log
           path: D:\lo-src\workdir\UnpackedTarball\nss\nspr\out\config.log
+          if-no-files-found: warn
+
+      - name: Upload build debug bundle (failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build-debug
+          path: |
+            D:\a\${{ github.event.repository.name }}\${{ github.event.repository.name }}\.ci-debug\*
+            D:\lo-src\workdir\UnpackedTarball\nss\build.log
+            D:\lo-src\workdir\ExternalProject\nss\build.log
+            D:\lo-src\workdir\UnpackedTarball\icu\source\build.log
           if-no-files-found: warn
 
       - uses: actions/upload-artifact@v4
