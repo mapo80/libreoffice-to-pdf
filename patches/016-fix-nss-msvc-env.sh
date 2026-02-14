@@ -6,6 +6,7 @@
 # 1) Ensure NSS build target uses LibreOffice autoconf wrappers on MSC.
 # 2) Keep existing LIB env as fallback when ILIB is empty/partial.
 # 3) Clear leaked compiler flag env vars before invoking nss make.
+# 4) Avoid passing LO-global SOLARINC to NSS XCFLAGS on WNT.
 set -euo pipefail
 
 LO_SRC="${1:?Missing LO source dir}"
@@ -53,11 +54,25 @@ else
     echo "    Patched NSS LIB env to preserve existing LIB fallback"
 fi
 
-if grep -Fq 'CL= CFLAGS= CXXFLAGS= CPPFLAGS= LDFLAGS= $(MAKE) nss_build_all' "$TARGET"; then
+if grep -Fq 'CL= _CL_= CFLAGS= CXXFLAGS= CPPFLAGS= LDFLAGS= $(MAKE) nss_build_all' "$TARGET"; then
     echo "    NSS make env cleanup already patched (skipping)"
-else
-    sed 's/$(MAKE) nss_build_all/CL= CFLAGS= CXXFLAGS= CPPFLAGS= LDFLAGS= $(MAKE) nss_build_all/' \
+elif grep -Fq 'CL= CFLAGS= CXXFLAGS= CPPFLAGS= LDFLAGS= $(MAKE) nss_build_all' "$TARGET"; then
+    sed 's/CL= CFLAGS= CXXFLAGS= CPPFLAGS= LDFLAGS= $(MAKE) nss_build_all/CL= _CL_= CFLAGS= CXXFLAGS= CPPFLAGS= LDFLAGS= $(MAKE) nss_build_all/' \
         "$TARGET" > "$TARGET.tmp"
     mv "$TARGET.tmp" "$TARGET"
-    echo "    Patched NSS build to clear CL/CFLAGS/CXXFLAGS/CPPFLAGS/LDFLAGS"
+    echo "    Extended NSS env cleanup with _CL_"
+else
+    sed 's/$(MAKE) nss_build_all/CL= _CL_= CFLAGS= CXXFLAGS= CPPFLAGS= LDFLAGS= $(MAKE) nss_build_all/' \
+        "$TARGET" > "$TARGET.tmp"
+    mv "$TARGET.tmp" "$TARGET"
+    echo "    Patched NSS build to clear CL/_CL_/CFLAGS/CXXFLAGS/CPPFLAGS/LDFLAGS"
+fi
+
+if grep -Fq 'XCFLAGS="$(ZLIB_CFLAGS)"' "$TARGET"; then
+    echo "    NSS XCFLAGS already slimmed to ZLIB_CFLAGS only (skipping)"
+else
+    sed 's/XCFLAGS="$(SOLARINC) $(ZLIB_CFLAGS)"/XCFLAGS="$(ZLIB_CFLAGS)"/' \
+        "$TARGET" > "$TARGET.tmp"
+    mv "$TARGET.tmp" "$TARGET"
+    echo "    Patched NSS XCFLAGS to avoid leaking global SOLARINC into NSPR configure"
 fi
