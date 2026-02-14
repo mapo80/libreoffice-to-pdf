@@ -25,12 +25,10 @@ BEGIN { replaced=0; skip=0; }
         print "# Convert /... paths to native Windows paths for Meson (python.exe)."
         print "cross_path_to_native = $(if $(filter /%,$(1)),$(shell cygpath -m \"$(1)\"),$(1))"
         print "cross_cc_path := $(firstword $(gb_CC))"
-        print "cross_cc_rest := $(wordlist 2,$(words $(gb_CC)),$(gb_CC))"
-        print "cross_cc_native := $(call cross_path_to_native,$(cross_cc_path)) $(cross_cc_rest)"
+        print "cross_cc_native := $(call cross_path_to_native,$(cross_cc_path))"
         print "cross_c = $(call python_listify,$(cross_cc_native))"
         print "cross_cxx_path := $(firstword $(gb_CXX))"
-        print "cross_cxx_rest := $(wordlist 2,$(words $(gb_CXX)),$(gb_CXX))"
-        print "cross_cxx_native := $(call cross_path_to_native,$(cross_cxx_path)) $(cross_cxx_rest)"
+        print "cross_cxx_native := $(call cross_path_to_native,$(cross_cxx_path))"
         print "cross_cxx = $(call python_listify,$(cross_cxx_native))"
         print "cross_ld_cmd := $(subst -fuse-ld=,,$(USE_LD))"
         print "cross_ld_path := $(firstword $(cross_ld_cmd))"
@@ -65,7 +63,7 @@ END {
 cat > "$TARGET.sed" <<'EOF'
 s|^ar = '$(AR)'$|ar = '$(cross_ar)'|
 s|^strip = '$(STRIP)'$|strip = '$(cross_strip)'|
-s|^\([[:space:]]*\)\$(MESON) setup builddir \\$|\1CC="$(cross_cc_native)" CXX="$(cross_cxx_native)" $(MESON) setup builddir \\|
+s|^\([[:space:]]*\)\$(MESON) setup builddir \\$|\1CL= _CL_= CFLAGS= CXXFLAGS= CPPFLAGS= LDFLAGS= CC="$(cross_cc_native)" CXX="$(cross_cxx_native)" $(MESON) setup builddir \\|
 EOF
 sed -f "$TARGET.sed" "$TARGET" > "$TARGET.tmp" && mv "$TARGET.tmp" "$TARGET"
 rm -f "$TARGET.sed"
