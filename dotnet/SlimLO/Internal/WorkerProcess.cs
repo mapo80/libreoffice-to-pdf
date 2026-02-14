@@ -51,21 +51,27 @@ internal sealed class WorkerProcess : IAsyncDisposable
             StandardOutputEncoding = null, // binary
         };
 
-        // Ensure the worker can find libslimlo and libmergedlo in its own directory
+        // Ensure the worker can find libslimlo and libmergedlo.
+        // Include both the worker's directory and the resource program/ directory,
+        // since the worker may be in a different location than the native assets
+        // (e.g., during development or when SLIMLO_WORKER_PATH is set).
         var workerDir = Path.GetDirectoryName(_workerPath)!;
+        var programDir = Path.Combine(_resourcePath, "program");
         if (OperatingSystem.IsLinux())
         {
             var existing = Environment.GetEnvironmentVariable("LD_LIBRARY_PATH");
+            var paths = workerDir == programDir ? workerDir : $"{workerDir}:{programDir}";
             psi.Environment["LD_LIBRARY_PATH"] = string.IsNullOrEmpty(existing)
-                ? workerDir
-                : $"{workerDir}:{existing}";
+                ? paths
+                : $"{paths}:{existing}";
         }
         else if (OperatingSystem.IsMacOS())
         {
             var existing = Environment.GetEnvironmentVariable("DYLD_LIBRARY_PATH");
+            var paths = workerDir == programDir ? workerDir : $"{workerDir}:{programDir}";
             psi.Environment["DYLD_LIBRARY_PATH"] = string.IsNullOrEmpty(existing)
-                ? workerDir
-                : $"{workerDir}:{existing}";
+                ? paths
+                : $"{paths}:{existing}";
         }
 
         // Set environment variables for the worker process.

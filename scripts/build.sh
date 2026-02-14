@@ -291,6 +291,9 @@ if [ -f "$PROJECT_DIR/slimlo-api/CMakeLists.txt" ]; then
     cp -a "$PROJECT_DIR/slimlo-api/build"/libslimlo.so* "$OUTPUT_DIR/program/" 2>/dev/null || true
     cp -a "$PROJECT_DIR/slimlo-api/build"/libslimlo*.dylib* "$OUTPUT_DIR/program/" 2>/dev/null || true
     cp -a "$PROJECT_DIR/slimlo-api/build"/slimlo.dll "$OUTPUT_DIR/program/" 2>/dev/null || true
+    # Copy worker executable (needed by .NET SDK for out-of-process conversion)
+    cp -a "$PROJECT_DIR/slimlo-api/build"/slimlo_worker "$OUTPUT_DIR/program/" 2>/dev/null || true
+    cp -a "$PROJECT_DIR/slimlo-api/build"/slimlo_worker.exe "$OUTPUT_DIR/program/" 2>/dev/null || true
     mkdir -p "$OUTPUT_DIR/include"
     cp "$PROJECT_DIR/slimlo-api/include/slimlo.h" "$OUTPUT_DIR/include/"
     echo "    SlimLO C API built and copied to $OUTPUT_DIR/program/"
