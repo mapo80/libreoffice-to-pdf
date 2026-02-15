@@ -10,8 +10,18 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 HOST_ARCH="$(uname -m 2>/dev/null || echo unknown)"
 
+# Detect true target architecture from MSVC environment.
+# MSYS2 may report x86_64 even on ARM64 Windows (Prism emulation).
+# Use VSCMD_ARG_TGT_ARCH (set by vcvarsall.bat) or LIB paths as ground truth.
+TARGET_ARCH="$HOST_ARCH"
+if [ "${VSCMD_ARG_TGT_ARCH:-}" = "arm64" ]; then
+    TARGET_ARCH="aarch64"
+elif echo "${LIB:-}" | grep -qi 'arm64'; then
+    TARGET_ARCH="aarch64"
+fi
+
 echo "============================================"
-echo " SlimLO — Windows Build ($HOST_ARCH)"
+echo " SlimLO — Windows Build ($HOST_ARCH → target: $TARGET_ARCH)"
 echo "============================================"
 echo ""
 
@@ -59,13 +69,13 @@ if [ -z "$CL_BIN" ] || [[ "$CL_BIN" == /usr/* ]]; then
     # Not in PATH or is MSYS shim — search in VS directory
     VS_INSTALL_POSIX="$(cygpath -u "$VS_INSTALL" 2>/dev/null || echo "$VS_INSTALL")"
 
-    case "$HOST_ARCH" in
+    case "$TARGET_ARCH" in
         aarch64|arm64)
-            # ARM64 native compiler
-            CL_BIN="$(find "$VS_INSTALL_POSIX/VC/Tools/MSVC" -path "*/Hostarm64/arm64/cl.exe" 2>/dev/null | head -1 || true)"
+            # ARM64 cross-compiler from x64 host tools (most common on MSYS2 x64-emulated)
+            CL_BIN="$(find "$VS_INSTALL_POSIX/VC/Tools/MSVC" -path "*/Hostx64/arm64/cl.exe" 2>/dev/null | head -1 || true)"
             if [ -z "$CL_BIN" ]; then
-                # Fallback: ARM64 cross-compiler from x64 host tools (runs under emulation)
-                CL_BIN="$(find "$VS_INSTALL_POSIX/VC/Tools/MSVC" -path "*/Hostx64/arm64/cl.exe" 2>/dev/null | head -1 || true)"
+                # Fallback: ARM64 native compiler (if running native ARM64 MSYS2)
+                CL_BIN="$(find "$VS_INSTALL_POSIX/VC/Tools/MSVC" -path "*/Hostarm64/arm64/cl.exe" 2>/dev/null | head -1 || true)"
             fi
             ;;
         x86_64|i686)
@@ -75,7 +85,7 @@ if [ -z "$CL_BIN" ] || [[ "$CL_BIN" == /usr/* ]]; then
 fi
 
 if [ -z "$CL_BIN" ]; then
-    echo "ERROR: cl.exe not found for $HOST_ARCH"
+    echo "ERROR: cl.exe not found for $TARGET_ARCH"
     echo "       Ensure Visual Studio C++ tools are installed for your architecture."
     echo "       Try opening a 'Developer Command Prompt' and running this script from there."
     exit 1
@@ -86,11 +96,23 @@ export PATH="$CL_DIR:$PATH"
 echo "    cl.exe: $CL_BIN"
 echo "    link.exe: $(command -v link.exe 2>/dev/null || echo 'not found')"
 
-# Also need MSVC lib.exe, headers, etc. — set up INCLUDE/LIB if not already set
-# (If run from a Developer Command Prompt, these are already set.)
+# Check MSVC environment (INCLUDE, LIB, etc.)
+# These should be set by Start-WindowsBuild.ps1 or by running from a VS Developer Command Prompt.
+# Calling vcvarsall.bat from inside MSYS2 bash is unreliable and may hang.
 if [ -z "${INCLUDE:-}" ]; then
-    echo "    NOTE: INCLUDE not set. For best results, run from a VS Developer Command Prompt."
-    echo "          Or run: source \"$VS_INSTALL\\VC\\Auxiliary\\Build\\vcvarsall.bat\" $HOST_ARCH"
+    echo "    ERROR: MSVC environment not loaded (INCLUDE is empty)."
+    echo ""
+    echo "    Launch the build using one of these methods:"
+    echo "      1. PowerShell:  .\\Start-WindowsBuild.ps1 -BuildOnly"
+    echo "      2. Batch file:  run-windows-build.bat"
+    echo "      3. VS Developer Command Prompt, then: msys2_shell.cmd -msys -here"
+    echo ""
+    echo "    The launcher will call vcvarsall.bat before entering MSYS2."
+    exit 1
+else
+    echo "    OK: MSVC environment present"
+    echo "    INCLUDE=${INCLUDE:0:80}..."
+    echo "    WindowsSdkVersion=${WindowsSdkVersion:-not set}"
 fi
 echo ""
 
@@ -138,7 +160,7 @@ echo ""
 # -----------------------------------------------------------
 # NASM (x86/x64 only — not needed on ARM64)
 # -----------------------------------------------------------
-case "$HOST_ARCH" in
+case "$TARGET_ARCH" in
     x86_64|i686)
         echo ">>> Finding NASM (x86 SIMD)..."
         NASM_BIN="${NASM:-}"
@@ -177,6 +199,7 @@ echo ""
 export NPROC="${NPROC:-4}"
 export LO_SRC_DIR="${LO_SRC_DIR:-$PROJECT_DIR/lo-src}"
 export OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_DIR/output}"
+export SKIP_CONFIGURE="${SKIP_CONFIGURE:-0}"
 
 # -----------------------------------------------------------
 # Launch build
