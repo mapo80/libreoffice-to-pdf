@@ -12,8 +12,11 @@ HOST_ARCH="$(uname -m 2>/dev/null || echo unknown)"
 
 # Detect true target architecture from MSVC environment.
 # MSYS2 may report x86_64 even on ARM64 Windows (Prism emulation).
-# Use VSCMD_ARG_TGT_ARCH (set by vcvarsall.bat) or LIB paths as ground truth.
-TARGET_ARCH="$HOST_ARCH"
+# Priority: 1) TARGET_ARCH env var (from Start-WindowsBuild.ps1 -Arch)
+#           2) VSCMD_ARG_TGT_ARCH (set by vcvarsall.bat)
+#           3) LIB paths (contain "arm64" for ARM64 targets)
+#           4) HOST_ARCH (uname -m, fallback)
+TARGET_ARCH="${TARGET_ARCH:-$HOST_ARCH}"
 if [ "${VSCMD_ARG_TGT_ARCH:-}" = "arm64" ]; then
     TARGET_ARCH="aarch64"
 elif echo "${LIB:-}" | grep -qi 'arm64'; then
@@ -103,7 +106,12 @@ if ! command -v rc.exe >/dev/null 2>&1; then
     SDK_DIR="${WindowsSdkDir:-}"
     SDK_VER="${WindowsSdkVersion:-}"
     if [ -n "$SDK_DIR" ] && [ -n "$SDK_VER" ]; then
-        SDK_BIN="$(cygpath -u "${SDK_DIR}bin/${SDK_VER}x64" 2>/dev/null || true)"
+        # Use target-arch SDK tools for cross-compilation
+        case "$TARGET_ARCH" in
+            aarch64|arm64) SDK_ARCH_DIR="arm64" ;;
+            *)             SDK_ARCH_DIR="x64" ;;
+        esac
+        SDK_BIN="$(cygpath -u "${SDK_DIR}bin/${SDK_VER}${SDK_ARCH_DIR}" 2>/dev/null || true)"
         if [ -d "$SDK_BIN" ] && [ -x "$SDK_BIN/rc.exe" ]; then
             export PATH="$SDK_BIN:$PATH"
             echo "    Added Windows SDK bin to PATH: $SDK_BIN"
@@ -248,7 +256,9 @@ export SKIP_CONFIGURE="${SKIP_CONFIGURE:-0}"
 # -----------------------------------------------------------
 # Launch build
 # -----------------------------------------------------------
-echo ">>> Launching build.sh..."
+# Export TARGET_ARCH so build.sh can pass --host/--build to configure
+export TARGET_ARCH
+echo ">>> Launching build.sh (TARGET_ARCH=$TARGET_ARCH)..."
 echo ""
 
 if "$SCRIPT_DIR/build.sh"; then

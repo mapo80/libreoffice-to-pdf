@@ -223,7 +223,9 @@ if [ -n "$PYTHON_BUILD_BIN" ]; then
     export PYTHON="${PYTHON:-$PYTHON_BUILD_BIN}"
 fi
 if [ "$PLATFORM" = "windows" ]; then
-    WIN_ARCH="$(uname -m 2>/dev/null || echo unknown)"
+    # Use TARGET_ARCH from environment (set by windows-build.sh) if available,
+    # otherwise fall back to uname -m (which always reports x86_64 under MSYS2).
+    WIN_ARCH="${TARGET_ARCH:-$(uname -m 2>/dev/null || echo unknown)}"
     case "$WIN_ARCH" in
         x86_64|i686)
             # NASM required for x86/x64 SIMD (libjpeg-turbo assembly)
@@ -264,6 +266,11 @@ if [ "$PLATFORM" = "windows" ]; then
     echo "    Forcing Visual Studio year: $VISUAL_STUDIO_YEAR"
     echo "    Forcing ProgramFiles(x86) for configure: $WIN_PROGRAMFILES_X86"
     AUTOGEN_ARGS+=("--with-visual-studio=$VISUAL_STUDIO_YEAR")
+    # Cross-compile for ARM64 when TARGET_ARCH is set
+    if [ "${TARGET_ARCH:-}" = "aarch64" ]; then
+        echo "    Cross-compiling: x86_64 host → aarch64 target"
+        AUTOGEN_ARGS+=("--host=aarch64-pc-cygwin" "--build=x86_64-pc-cygwin")
+    fi
     env "ProgramFiles(x86)=$WIN_PROGRAMFILES_X86" \
         "PROGRAMFILESX86=$WIN_PROGRAMFILES_X86" \
         "PYTHON_FOR_BUILD=${PYTHON_FOR_BUILD:-}" \
