@@ -96,6 +96,23 @@ export PATH="$CL_DIR:$PATH"
 echo "    cl.exe: $CL_BIN"
 echo "    link.exe: $(command -v link.exe 2>/dev/null || echo 'not found')"
 
+# Ensure Windows SDK tools (rc.exe, mt.exe) are in PATH.
+# vcvarsall.bat sets WindowsSdkDir and WindowsSdkVersion but the bin directory
+# may not survive PATH transformations when entering MSYS2.
+if ! command -v rc.exe >/dev/null 2>&1; then
+    SDK_DIR="${WindowsSdkDir:-}"
+    SDK_VER="${WindowsSdkVersion:-}"
+    if [ -n "$SDK_DIR" ] && [ -n "$SDK_VER" ]; then
+        SDK_BIN="$(cygpath -u "${SDK_DIR}bin/${SDK_VER}x64" 2>/dev/null || true)"
+        if [ -d "$SDK_BIN" ] && [ -x "$SDK_BIN/rc.exe" ]; then
+            export PATH="$SDK_BIN:$PATH"
+            echo "    Added Windows SDK bin to PATH: $SDK_BIN"
+        fi
+    fi
+fi
+echo "    rc.exe: $(command -v rc.exe 2>/dev/null || echo 'not found')"
+echo "    mt.exe: $(command -v mt.exe 2>/dev/null || echo 'not found')"
+
 # Check MSVC environment (INCLUDE, LIB, etc.)
 # These should be set by Start-WindowsBuild.ps1 or by running from a VS Developer Command Prompt.
 # Calling vcvarsall.bat from inside MSYS2 bash is unreliable and may hang.
@@ -181,6 +198,33 @@ case "$TARGET_ARCH" in
         echo ""
         ;;
 esac
+
+# -----------------------------------------------------------
+# CMake (for SlimLO C API build — Step 7)
+# -----------------------------------------------------------
+echo ">>> Finding CMake..."
+CMAKE_BIN="$(command -v cmake 2>/dev/null || command -v cmake.exe 2>/dev/null || true)"
+if [ -z "$CMAKE_BIN" ]; then
+    # Search in Visual Studio installation
+    VS_INSTALL_POSIX="$(cygpath -u "$VS_INSTALL" 2>/dev/null || echo "$VS_INSTALL")"
+    for candidate in \
+        "$VS_INSTALL_POSIX/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe" \
+        /c/Program\ Files/CMake/bin/cmake.exe \
+        /c/Program\ Files\ \(x86\)/CMake/bin/cmake.exe; do
+        if [ -x "$candidate" ]; then
+            CMAKE_BIN="$candidate"
+            export PATH="$(dirname "$CMAKE_BIN"):$PATH"
+            break
+        fi
+    done
+fi
+if [ -n "$CMAKE_BIN" ]; then
+    echo "    CMake: $CMAKE_BIN"
+    "$CMAKE_BIN" --version 2>/dev/null | head -1 || true
+else
+    echo "    WARNING: cmake not found — SlimLO C API build (Step 7) will be skipped"
+fi
+echo ""
 
 # -----------------------------------------------------------
 # ICU data filter

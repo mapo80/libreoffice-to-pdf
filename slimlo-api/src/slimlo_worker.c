@@ -27,6 +27,9 @@
   #include <io.h>
   #include <fcntl.h>
   #include <windows.h>
+  /* MSVC does not define ssize_t (POSIX type) */
+  #include <BaseTsd.h>
+  typedef SSIZE_T ssize_t;
   #define PIPE_READ  _read
   #define PIPE_WRITE _write
   #define DUP        _dup
@@ -742,7 +745,12 @@ int main(void) {
 
     /* Enable font-related logging so stderr capture can detect warnings.
      * Don't override if already set by the parent process. */
+#ifdef _WIN32
+    if (!getenv("SAL_LOG"))
+        _putenv_s("SAL_LOG", "+WARN.vcl.fonts+INFO.vcl+WARN.vcl");
+#else
     setenv("SAL_LOG", "+WARN.vcl.fonts+INFO.vcl+WARN.vcl", 0);
+#endif
 
     /* Main message loop */
     for (;;) {

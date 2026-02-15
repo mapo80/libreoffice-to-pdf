@@ -97,7 +97,7 @@ esac
 # -----------------------------------------------------------
 echo "  Copying bootstrap configuration..."
 for rc in sofficerc soffice.ini fundamentalrc fundamental.ini versionrc version.ini \
-          bootstraprc bootstrap.ini unorc uno.ini lounorc loaborc saborc; do
+          bootstraprc bootstrap.ini unorc uno.ini lounorc louno.ini loaborc saborc; do
     cp -a "$INSTDIR/$ETC_FOLDER/$rc" "$OUTPUT_DIR/program/" 2>/dev/null || true
 done
 # macOS: unorc lives in Resources/ure/etc/unorc — copy and adapt paths for flat layout

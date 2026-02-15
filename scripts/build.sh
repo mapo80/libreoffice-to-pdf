@@ -340,9 +340,21 @@ echo ""
 # Step 7: Build SlimLO C API wrapper
 # -----------------------------------------------------------
 echo ">>> Step 7: Building SlimLO C API..."
-if [ -f "$PROJECT_DIR/slimlo-api/CMakeLists.txt" ]; then
+if [ -f "$PROJECT_DIR/slimlo-api/CMakeLists.txt" ] && command -v cmake >/dev/null 2>&1; then
+    # On Windows (MSYS2), use Ninja generator since we have cl.exe in PATH.
+    # Also pass rc.exe/mt.exe paths explicitly — cmake may not find them via PATH.
+    # Use an array to preserve paths with spaces (e.g. "C:\Program Files\...").
+    CMAKE_EXTRA_ARGS=()
+    if [ "$PLATFORM" = "windows" ]; then
+        CMAKE_EXTRA_ARGS+=("-G" "Ninja")
+        RC_BIN="$(command -v rc.exe 2>/dev/null || true)"
+        MT_BIN="$(command -v mt.exe 2>/dev/null || true)"
+        [ -n "$RC_BIN" ] && CMAKE_EXTRA_ARGS+=("-DCMAKE_RC_COMPILER=$(cygpath -m "$RC_BIN")")
+        [ -n "$MT_BIN" ] && CMAKE_EXTRA_ARGS+=("-DCMAKE_MT=$(cygpath -m "$MT_BIN")")
+    fi
     cmake -S "$PROJECT_DIR/slimlo-api" \
           -B "$PROJECT_DIR/slimlo-api/build" \
+          "${CMAKE_EXTRA_ARGS[@]}" \
           -DINSTDIR="$INSTDIR_ROOT" \
           -DCMAKE_BUILD_TYPE=Release
     cmake --build "$PROJECT_DIR/slimlo-api/build" -j"$NPROC"
@@ -357,6 +369,9 @@ if [ -f "$PROJECT_DIR/slimlo-api/CMakeLists.txt" ]; then
     mkdir -p "$OUTPUT_DIR/include"
     cp "$PROJECT_DIR/slimlo-api/include/slimlo.h" "$OUTPUT_DIR/include/"
     echo "    SlimLO C API built and copied to $OUTPUT_DIR/program/"
+elif [ -f "$PROJECT_DIR/slimlo-api/CMakeLists.txt" ]; then
+    echo "    WARNING: cmake not found, skipping C API build"
+    echo "    Install cmake or use Visual Studio's bundled cmake"
 else
     echo "    WARNING: slimlo-api/CMakeLists.txt not found, skipping C API build"
 fi
