@@ -6,6 +6,9 @@
 # (e.g. /c/PROGRA~1/.../cl.exe). Meson is executed via native Windows Python,
 # which cannot spawn POSIX-style executable paths and fails with:
 #   "Unknown compiler(s)" / "WinError 2"
+#
+# Also ensures HarfBuzz can resolve Graphite2 via pkg-config by providing
+# graphite2.pc when only graphite2-uninstalled.pc is present.
 set -euo pipefail
 
 LO_SRC="${1:?Missing LO source dir}"
@@ -60,6 +63,24 @@ END {
     }
 }
 ' "$TARGET" > "$TARGET.tmp" && mv "$TARGET.tmp" "$TARGET"
+
+if ! grep -Fq 'graphite2-uninstalled.pc' "$TARGET"; then
+    awk '
+BEGIN { inserted=0; }
+{
+    if (!inserted && $0 ~ /^[[:space:]]*PKG_CONFIG_PATH="/) {
+        print "\t\tif [ -f \"$(gb_UnpackedTarball_workdir)/graphite/graphite2-uninstalled.pc\" ] && [ ! -f \"$(gb_UnpackedTarball_workdir)/graphite/graphite2.pc\" ]; then cp \"$(gb_UnpackedTarball_workdir)/graphite/graphite2-uninstalled.pc\" \"$(gb_UnpackedTarball_workdir)/graphite/graphite2.pc\"; fi && \\"
+        inserted=1
+    }
+    print $0
+}
+END {
+    if (!inserted) {
+        exit 2
+    }
+}
+' "$TARGET" > "$TARGET.tmp" && mv "$TARGET.tmp" "$TARGET"
+fi
 
 cat > "$TARGET.sed" <<'EOF'
 s|^ar = '$(AR)'$|ar = '$(cross_ar)'|
