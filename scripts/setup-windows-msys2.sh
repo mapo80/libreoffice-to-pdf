@@ -28,8 +28,9 @@ echo ""
 # -----------------------------------------------------------
 echo ">>> Step 2: Installing MinGW64 packages..."
 # pkgconf is needed by LO configure regardless of target architecture.
-# On ARM64 Windows, mingw-w64-x86_64-pkgconf runs under x86 emulation.
-pacman -S --noconfirm --needed mingw-w64-x86_64-pkgconf
+# ninja is required by meson (harfbuzz build backend).
+# On ARM64 Windows, mingw-w64-x86_64 packages run under x86 emulation.
+pacman -S --noconfirm --needed mingw-w64-x86_64-pkgconf mingw-w64-x86_64-ninja
 
 case "$HOST_ARCH" in
     x86_64|i686)
