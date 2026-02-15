@@ -1,0 +1,135 @@
+#!/bin/bash
+# run-gate.sh — Deterministic DOCX gate with hard timeouts and worker cleanup.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+ARTIFACT_DIR="${1:-}"
+if [ -z "$ARTIFACT_DIR" ]; then
+    case "$(uname -s)" in
+        Darwin) ARTIFACT_DIR="$PROJECT_DIR/output-macos" ;;
+        *)      ARTIFACT_DIR="$PROJECT_DIR/output" ;;
+    esac
+fi
+
+if [ ! -d "$ARTIFACT_DIR/program" ]; then
+    echo "ERROR: artifact dir must contain program/: $ARTIFACT_DIR"
+    exit 1
+fi
+
+GATE_TIMEOUT_C="${GATE_TIMEOUT_C:-240}"
+GATE_TIMEOUT_DOTNET="${GATE_TIMEOUT_DOTNET:-480}"
+GATE_ENABLE_DOTNET="${GATE_ENABLE_DOTNET:-auto}"   # auto|0|1
+GATE_DOTNET_FRAMEWORK="${GATE_DOTNET_FRAMEWORK:-net8.0}"
+GATE_DOTNET_FILTER="${GATE_DOTNET_FILTER:-FullyQualifiedName~PdfConverterIntegrationTests.ConvertAsync_ValidDocx_ProducesPdf|FullyQualifiedName~PdfConverterIntegrationTests.ConvertAsync_BufferValidDocx_ReturnsPdfBytes|FullyQualifiedName~PdfConverterStreamIntegrationTests.ConvertAsync_StreamToStream_ValidDocx_ProducesPdf|FullyQualifiedName~PdfConverterStreamIntegrationTests.ConvertAsync_ConcurrentStreamToStream_AllSucceed|FullyQualifiedName~PdfConverterIntegrationTests.ConvertAsync_BufferUnsupportedFormat_ReturnsFailure|FullyQualifiedName~PdfConverterStreamValidationTests.ConvertAsync_StreamToStream_UnsupportedFormat_ReturnsFailure|FullyQualifiedName~PdfConverterStreamValidationTests.ConvertAsync_StreamToFile_UnsupportedFormat_ReturnsFailure}"
+
+run_with_timeout() {
+    local seconds="$1"
+    shift
+    local rc=0
+    perl -e 'alarm shift; exec @ARGV' "$seconds" "$@" || rc=$?
+    if [ "$rc" -eq 142 ]; then
+        return 124
+    fi
+    return "$rc"
+}
+
+cleanup_orphans() {
+    pkill -f '/slimlo-prune-probe\..*/program/slimlo_worker' 2>/dev/null || true
+    pkill -f '/slimlo-gate\..*/program/slimlo_worker' 2>/dev/null || true
+}
+
+trap cleanup_orphans EXIT
+
+echo "=== SlimLO Gate ==="
+echo "Artifact: $ARTIFACT_DIR"
+echo "C timeout: ${GATE_TIMEOUT_C}s"
+echo "Dotnet timeout: ${GATE_TIMEOUT_DOTNET}s"
+
+echo "[1/2] C smoke gate (tests/test.sh)"
+set +e
+run_with_timeout "$GATE_TIMEOUT_C" env SLIMLO_DIR="$ARTIFACT_DIR" "$PROJECT_DIR/tests/test.sh"
+RC_C=$?
+set -e
+if [ "$RC_C" -eq 124 ]; then
+    echo "FAIL: C smoke gate timed out after ${GATE_TIMEOUT_C}s"
+    exit 124
+fi
+if [ "$RC_C" -ne 0 ]; then
+    echo "FAIL: C smoke gate failed (exit $RC_C)"
+    exit "$RC_C"
+fi
+echo "PASS: C smoke gate"
+
+DOTNET_AVAILABLE=0
+if command -v dotnet >/dev/null 2>&1 && [ -d "$PROJECT_DIR/dotnet/SlimLO.Tests" ]; then
+    DOTNET_AVAILABLE=1
+fi
+
+ENABLE_DOTNET=0
+case "$GATE_ENABLE_DOTNET" in
+    1) ENABLE_DOTNET=1 ;;
+    0) ENABLE_DOTNET=0 ;;
+    auto)
+        if [ "$DOTNET_AVAILABLE" -eq 1 ]; then
+            ENABLE_DOTNET=1
+        fi
+        ;;
+    *)
+        echo "ERROR: GATE_ENABLE_DOTNET must be auto, 0, or 1 (got '$GATE_ENABLE_DOTNET')"
+        exit 1
+        ;;
+esac
+
+if [ "$ENABLE_DOTNET" -eq 1 ]; then
+    WORKER="$ARTIFACT_DIR/program/slimlo_worker"
+    if [ ! -x "$WORKER" ] && [ -x "$ARTIFACT_DIR/program/slimlo_worker.exe" ]; then
+        WORKER="$ARTIFACT_DIR/program/slimlo_worker.exe"
+    fi
+    if [ ! -x "$WORKER" ]; then
+        echo "FAIL: .NET gate requested but worker missing in artifact"
+        exit 1
+    fi
+
+    EXPECTED_DOTNET_MAJOR="$(echo "$GATE_DOTNET_FRAMEWORK" | sed -E 's/^net([0-9]+).*/\1/')"
+    if ! dotnet --list-runtimes 2>/dev/null | awk '/Microsoft.NETCore.App/ {print $2}' | cut -d. -f1 | grep -qx "$EXPECTED_DOTNET_MAJOR"; then
+        if [ "$GATE_ENABLE_DOTNET" = "1" ]; then
+            echo "FAIL: requested .NET gate but runtime $GATE_DOTNET_FRAMEWORK is unavailable"
+            exit 1
+        fi
+        echo "WARN: runtime $GATE_DOTNET_FRAMEWORK unavailable, skipping .NET gate"
+        echo "=== Gate PASSED (C only) ==="
+        exit 0
+    fi
+
+    echo "[2/2] .NET gate ($GATE_DOTNET_FRAMEWORK)"
+    set +e
+    (
+        cd "$PROJECT_DIR/dotnet"
+        run_with_timeout "$GATE_TIMEOUT_DOTNET" \
+            env \
+                SLIMLO_RESOURCE_PATH="$ARTIFACT_DIR" \
+                SLIMLO_WORKER_PATH="$WORKER" \
+                dotnet test SlimLO.Tests/SlimLO.Tests.csproj \
+                    --nologo \
+                    --verbosity quiet \
+                    -f "$GATE_DOTNET_FRAMEWORK" \
+                    --filter "$GATE_DOTNET_FILTER"
+    )
+    RC_DOTNET=$?
+    set -e
+    if [ "$RC_DOTNET" -eq 124 ]; then
+        echo "FAIL: .NET gate timed out after ${GATE_TIMEOUT_DOTNET}s"
+        exit 124
+    fi
+    if [ "$RC_DOTNET" -ne 0 ]; then
+        echo "FAIL: .NET gate failed (exit $RC_DOTNET)"
+        exit "$RC_DOTNET"
+    fi
+    echo "PASS: .NET gate"
+else
+    echo "[2/2] .NET gate skipped (GATE_ENABLE_DOTNET=$GATE_ENABLE_DOTNET)"
+fi
+
+echo "=== Gate PASSED ==="

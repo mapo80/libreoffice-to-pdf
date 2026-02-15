@@ -10,15 +10,13 @@ set -euo pipefail
 
 INSTDIR="${1:?Usage: extract-artifacts.sh <instdir> <output-dir>}"
 OUTPUT_DIR="${2:?Usage: extract-artifacts.sh <instdir> <output-dir>}"
-DOCX_AGGRESSIVE="${DOCX_AGGRESSIVE:-0}"
+DOCX_AGGRESSIVE="${DOCX_AGGRESSIVE:-1}"
 
-case "$DOCX_AGGRESSIVE" in
-    0|1) ;;
-    *)
-        echo "ERROR: DOCX_AGGRESSIVE must be 0 or 1 (got '$DOCX_AGGRESSIVE')"
-        exit 1
-        ;;
-esac
+if [ "$DOCX_AGGRESSIVE" != "1" ]; then
+    echo "ERROR: DOCX_AGGRESSIVE=$DOCX_AGGRESSIVE is unsupported."
+    echo "       SlimLO extraction now runs in always-aggressive DOCX-only mode."
+    exit 1
+fi
 
 if [ ! -d "$INSTDIR" ]; then
     echo "ERROR: instdir not found: $INSTDIR"
@@ -26,7 +24,7 @@ if [ ! -d "$INSTDIR" ]; then
 fi
 
 echo "Extracting artifacts from $INSTDIR to $OUTPUT_DIR..."
-echo "  Profile: $([ "$DOCX_AGGRESSIVE" = "1" ] && echo "docx-aggressive" || echo "compat")"
+echo "  Profile: docx-aggressive"
 
 # Platform-specific folder names (macOS .app bundle uses different layout)
 case "$(uname -s)" in
@@ -298,36 +296,33 @@ rm -f "$OUTPUT_DIR/program/types/oovbaapi.rdb"
 rm -f "$OUTPUT_DIR/share/registry/lingucomponent.xcd"
 
 # -----------------------------------------------------------
-# 7f2. Optional DOCX aggressive runtime pruning
-#      Keep disabled by default for rollback safety (DOCX_AGGRESSIVE=0).
+# 7f2. Always-aggressive DOCX runtime pruning
 # -----------------------------------------------------------
-if [ "$DOCX_AGGRESSIVE" = "1" ]; then
-    echo "  Applying DOCX aggressive pruning profile..."
+echo "  Applying DOCX aggressive pruning profile..."
 
-    # Additional runtime libraries validated for DOCX-only conversion.
-    # NOTE: libsoftokn3/libfreebl3 are intentionally kept (probe-rejected).
-    for lib in \
-        libmswordlo libcached1 libgraphicfilterlo libfps_aqualo \
-        libnssckbi libnssdbm3 libssl3 \
-        libnet_uno libmacbe1lo libintrospectionlo libinvocationlo \
-        libinvocadaptlo libreflectionlo libunsafe_uno_uno libaffine_uno_uno \
-        libbinaryurplo libbootstraplo libiolo libloglo libstoragefdlo \
-        libtllo libucbhelper libucppkg1 libsal_textenc \
-    ; do
-        remove_program_library_variants "$lib"
-    done
+# Additional runtime libraries validated for DOCX-only conversion.
+# NOTE: libsoftokn3/libfreebl3 are intentionally kept (probe-rejected).
+for lib in \
+    libmswordlo libcached1 libgraphicfilterlo libfps_aqualo \
+    libnssckbi libnssdbm3 libssl3 \
+    libnet_uno libmacbe1lo libintrospectionlo libinvocationlo \
+    libinvocadaptlo libreflectionlo libunsafe_uno_uno libaffine_uno_uno \
+    libbinaryurplo libbootstraplo libiolo libloglo libstoragefdlo \
+    libtllo libucbhelper libucppkg1 libsal_textenc libsal_textenclo \
+; do
+    remove_program_library_variants "$lib"
+done
 
-    # UI/config modules not needed in headless DOCX-only mode.
-    for cfg in svx sfx vcl fps formula uui xmlsec; do
-        rm -rf "$OUTPUT_DIR/share/config/soffice.cfg/$cfg"
-    done
+# UI/config modules not needed in headless DOCX-only mode.
+for cfg in svx sfx vcl fps formula uui xmlsec; do
+    rm -rf "$OUTPUT_DIR/share/config/soffice.cfg/$cfg"
+done
 
-    # Remove filter data and selected registry entries not needed for DOCX->PDF.
-    rm -rf "$OUTPUT_DIR/share/filter"
-    rm -f "$OUTPUT_DIR/share/registry/Langpack-en-US.xcd"
-    rm -f "$OUTPUT_DIR/share/registry/ctl.xcd"
-    rm -f "$OUTPUT_DIR/share/registry/graphicfilter.xcd"
-fi
+# Remove filter data and selected registry entries not needed for DOCX->PDF.
+rm -rf "$OUTPUT_DIR/share/filter"
+rm -f "$OUTPUT_DIR/share/registry/Langpack-en-US.xcd"
+rm -f "$OUTPUT_DIR/share/registry/ctl.xcd"
+rm -f "$OUTPUT_DIR/share/registry/graphicfilter.xcd"
 
 # -----------------------------------------------------------
 # 7g. Remove NEEDED-but-unused external libraries via patchelf
@@ -449,7 +444,7 @@ esac
 # -----------------------------------------------------------
 echo ""
 echo "=== Artifact Summary ==="
-echo "Profile: $([ "$DOCX_AGGRESSIVE" = "1" ] && echo "docx-aggressive" || echo "compat")"
+echo "Profile: docx-aggressive"
 LIB_COUNT=$(find "$OUTPUT_DIR/program" \( -name "*.so" -o -name "*.so.*" -o -name "*.dylib" -o -name "*.dylib.*" -o -name "*.dll" \) | wc -l)
 echo "Libraries: $LIB_COUNT"
 echo ""

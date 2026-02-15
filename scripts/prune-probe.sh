@@ -11,6 +11,8 @@
 #   PRUNE_OUTPUT_DIR      Optional final pruned artifact output dir
 #   PRUNE_WORKDIR         Optional workdir (default: mktemp)
 #   PRUNE_DOTNET_GATE     1 to enable extra .NET stream/buffer gate (default: 0)
+#   PRUNE_GATE_TIMEOUT_C      Timeout seconds for C gate when using run-gate.sh
+#   PRUNE_GATE_TIMEOUT_DOTNET Timeout seconds for .NET gate when using run-gate.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -29,6 +31,8 @@ PRUNE_MANIFEST="${PRUNE_MANIFEST:-$PROJECT_DIR/artifacts/prune-manifest-docx-agg
 PRUNE_OUTPUT_DIR="${PRUNE_OUTPUT_DIR:-}"
 PRUNE_WORKDIR="${PRUNE_WORKDIR:-$(mktemp -d "${TMPDIR:-/tmp}/slimlo-prune-probe.XXXXXX")}"
 PRUNE_DOTNET_GATE="${PRUNE_DOTNET_GATE:-0}"
+PRUNE_GATE_TIMEOUT_C="${PRUNE_GATE_TIMEOUT_C:-240}"
+PRUNE_GATE_TIMEOUT_DOTNET="${PRUNE_GATE_TIMEOUT_DOTNET:-480}"
 
 cleanup() {
     rm -rf "$PRUNE_WORKDIR"
@@ -82,7 +86,6 @@ remove_candidate() {
 
 run_gate() {
     local artifact="$1"
-    local rc=0
 
     if [ -n "$PRUNE_GATE_CMD" ]; then
         (
@@ -96,36 +99,11 @@ run_gate() {
 
     (
         cd "$PROJECT_DIR"
-        SLIMLO_DIR="$artifact" ./tests/test.sh >/dev/null
+        GATE_ENABLE_DOTNET="$([ "$PRUNE_DOTNET_GATE" = "1" ] && echo "1" || echo "0")" \
+        GATE_TIMEOUT_C="$PRUNE_GATE_TIMEOUT_C" \
+        GATE_TIMEOUT_DOTNET="$PRUNE_GATE_TIMEOUT_DOTNET" \
+        ./scripts/run-gate.sh "$artifact" >/dev/null
     )
-    rc=$?
-    if [ "$rc" -ne 0 ]; then
-        return "$rc"
-    fi
-
-    if [ "$PRUNE_DOTNET_GATE" = "1" ] && command -v dotnet >/dev/null 2>&1 && [ -d "$PROJECT_DIR/dotnet/SlimLO.Tests" ]; then
-        local worker="$artifact/program/slimlo_worker"
-        if [ ! -x "$worker" ] && [ -x "$artifact/program/slimlo_worker.exe" ]; then
-            worker="$artifact/program/slimlo_worker.exe"
-        fi
-
-        if [ -x "$worker" ]; then
-            (
-                cd "$PROJECT_DIR/dotnet"
-                SLIMLO_RESOURCE_PATH="$artifact" \
-                SLIMLO_WORKER_PATH="$worker" \
-                dotnet test SlimLO.Tests/SlimLO.Tests.csproj --nologo --verbosity quiet \
-                    --filter "FullyQualifiedName~PdfConverterIntegrationTests.ConvertAsync_ValidDocx_CreatesPdf|FullyQualifiedName~PdfConverterIntegrationTests.ConvertAsync_BufferValidDocx_ReturnsPdfBytes|FullyQualifiedName~PdfConverterStreamIntegrationTests.ConvertAsync_StreamToStream_ValidDocx_ProducesPdf|FullyQualifiedName~PdfConverterIntegrationTests.ConvertAsync_ConcurrentConversions_Succeeds" \
-                    >/dev/null
-            )
-            rc=$?
-            if [ "$rc" -ne 0 ]; then
-                return "$rc"
-            fi
-        fi
-    fi
-
-    return 0
 }
 
 declare -a CANDIDATES=()
@@ -169,6 +147,20 @@ else
         libucbhelper
         libucppkg1
         libsal_textenc
+        libsal_textenclo
+        libcurl.4
+        libepoxy
+        libAppleRemotelo
+        liblcms2.2
+        librdf-lo.0
+        libraptor2-lo.0
+        librasqal-lo.3
+        libnss3
+        libnssutil3
+        libsmime3
+        libnspr4
+        libplc4
+        libplds4
         share/config/soffice.cfg/svx
         share/config/soffice.cfg/sfx
         share/config/soffice.cfg/vcl
@@ -177,9 +169,11 @@ else
         share/config/soffice.cfg/uui
         share/config/soffice.cfg/xmlsec
         share/filter
+        share/palette
         share/registry/Langpack-en-US.xcd
         share/registry/ctl.xcd
         share/registry/graphicfilter.xcd
+        share/registry/math.xcd
     )
 fi
 
@@ -192,27 +186,45 @@ copy_tree "$ARTIFACT_DIR" "$CURRENT_DIR"
 BASELINE_KB="$(artifact_size_kb "$CURRENT_DIR")"
 echo "Baseline size: $((BASELINE_KB / 1024)) MB ($BASELINE_KB KB)"
 echo "Running baseline gate..."
-if ! run_gate "$CURRENT_DIR"; then
-    echo "ERROR: baseline gate failed. Refusing to probe candidates."
+set +e
+run_gate "$CURRENT_DIR"
+BASE_RC=$?
+set -e
+if [ "$BASE_RC" -ne 0 ]; then
+    if [ "$BASE_RC" -eq 124 ]; then
+        echo "ERROR: baseline gate timed out. Refusing to probe candidates."
+    else
+        echo "ERROR: baseline gate failed. Refusing to probe candidates."
+    fi
     exit 1
 fi
 echo "Baseline gate: PASS"
 
 declare -a ACCEPTED=()
 declare -a REJECTED=()
+declare -a REJECTED_TIMEOUT=()
 
 for candidate in "${CANDIDATES[@]}"; do
     echo "Probing candidate: $candidate"
     copy_tree "$CURRENT_DIR" "$TRIAL_DIR"
     remove_candidate "$TRIAL_DIR" "$candidate"
 
-    if run_gate "$TRIAL_DIR"; then
+    set +e
+    run_gate "$TRIAL_DIR"
+    RC=$?
+    set -e
+    if [ "$RC" -eq 0 ]; then
         echo "  PASS -> accepted"
         ACCEPTED+=("$candidate")
         rm -rf "$CURRENT_DIR"
         mv "$TRIAL_DIR" "$CURRENT_DIR"
     else
-        echo "  FAIL -> rejected"
+        if [ "$RC" -eq 124 ]; then
+            echo "  TIMEOUT -> rejected"
+            REJECTED_TIMEOUT+=("$candidate")
+        else
+            echo "  FAIL -> rejected"
+        fi
         REJECTED+=("$candidate")
         rm -rf "$TRIAL_DIR"
     fi
@@ -237,6 +249,11 @@ mkdir -p "$(dirname "$PRUNE_MANIFEST")"
     echo
     echo "[rejected]"
     for candidate in "${REJECTED[@]}"; do
+        echo "$candidate"
+    done
+    echo
+    echo "[rejected_timeout]"
+    for candidate in "${REJECTED_TIMEOUT[@]}"; do
         echo "$candidate"
     done
 } > "$PRUNE_MANIFEST"
