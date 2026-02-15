@@ -10,6 +10,7 @@ LO_SRC_DIR="${LO_SRC_DIR:-$PROJECT_DIR/lo-src}"
 OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_DIR/output}"
 NPROC="${NPROC:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
 DOCX_AGGRESSIVE="${DOCX_AGGRESSIVE:-0}"
+SKIP_CONFIGURE="${SKIP_CONFIGURE:-0}"
 
 # Detect platform
 case "$(uname -s)" in
@@ -107,16 +108,48 @@ echo " Platform:    $PLATFORM"
 echo " Source dir:   $LO_SRC_DIR"
 echo " Output dir:   $OUTPUT_DIR"
 echo " Parallelism:  $NPROC"
+if [ "$SKIP_CONFIGURE" = "1" ]; then
+echo " Mode:         build-only (skip configure)"
+fi
 echo "============================================"
 echo ""
+
+if [ "$SKIP_CONFIGURE" = "1" ]; then
+    if [ ! -f "$LO_SRC_DIR/config_host.mk" ]; then
+        echo "ERROR: SKIP_CONFIGURE=1 but config_host.mk not found."
+        echo "       Run a full build first before using --skip-configure."
+        exit 1
+    fi
+    echo ">>> Skipping steps 1-4.5 (SKIP_CONFIGURE=1)"
+    echo ""
+    cd "$LO_SRC_DIR"
+else
 
 # -----------------------------------------------------------
 # Step 1: Clone upstream source (shallow for speed)
 # -----------------------------------------------------------
 if [ ! -d "$LO_SRC_DIR/.git" ]; then
     echo ">>> Step 1: Cloning LibreOffice $LO_VERSION..."
-    git clone --depth 1 --branch "$LO_VERSION" \
-        https://github.com/LibreOffice/core.git "$LO_SRC_DIR"
+    # Use larger buffers for reliability on slow/flaky connections.
+    # MSYS2 git may segfault after a successful clone on large repos,
+    # so verify the result by checking for .git dir instead of exit code.
+    git -c http.postBuffer=524288000 -c pack.windowMemory=256m \
+        clone --depth 1 --branch "$LO_VERSION" \
+        https://github.com/LibreOffice/core.git "$LO_SRC_DIR" || true
+    if [ ! -d "$LO_SRC_DIR/.git" ] || [ ! -f "$LO_SRC_DIR/configure.ac" ]; then
+        echo "ERROR: git clone failed — $LO_SRC_DIR is incomplete"
+        exit 1
+    fi
+    # MSYS2 git may segfault mid-checkout, leaving files missing.
+    # Detect and repair by checking for deleted files and restoring them.
+    MISSING="$(git -C "$LO_SRC_DIR" status --short 2>/dev/null | grep -c '^D ' || true)"
+    if [ "$MISSING" -gt 0 ]; then
+        echo "    WARNING: $MISSING files missing after clone (likely git segfault during checkout)"
+        echo "    Restoring missing files..."
+        rm -f "$LO_SRC_DIR/.git/index.lock"
+        git -C "$LO_SRC_DIR" checkout HEAD -- .
+        echo "    OK: files restored"
+    fi
 else
     echo ">>> Step 1: Source already exists at $LO_SRC_DIR (skipping clone)"
     CURRENT_TAG="$(git -C "$LO_SRC_DIR" describe --tags --exact-match 2>/dev/null || echo 'unknown')"
@@ -215,7 +248,18 @@ if [ "$PLATFORM" = "windows" ]; then
     esac
 fi
 if [ "$PLATFORM" = "windows" ]; then
-    VISUAL_STUDIO_YEAR="${SLIMLO_VISUAL_STUDIO_YEAR:-2022}"
+    # Auto-detect VS version if not explicitly set
+    if [ -z "${SLIMLO_VISUAL_STUDIO_YEAR:-}" ]; then
+        VS_MAJOR="$("${VSWHERE:-/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe}" -products '*' -latest -property installationVersion 2>/dev/null | cut -d. -f1 || true)"
+        case "$VS_MAJOR" in
+            18) VISUAL_STUDIO_YEAR="2026" ;;
+            17) VISUAL_STUDIO_YEAR="2022" ;;
+            16) VISUAL_STUDIO_YEAR="2019" ;;
+            *)  VISUAL_STUDIO_YEAR="2022" ;;
+        esac
+    else
+        VISUAL_STUDIO_YEAR="$SLIMLO_VISUAL_STUDIO_YEAR"
+    fi
     WIN_PROGRAMFILES_X86="${WIN_PROGRAMFILES_X86:-C:/Program Files (x86)}"
     echo "    Forcing Visual Studio year: $VISUAL_STUDIO_YEAR"
     echo "    Forcing ProgramFiles(x86) for configure: $WIN_PROGRAMFILES_X86"
@@ -258,6 +302,8 @@ case "$PLATFORM" in
     *)       rm -f "$LO_SRC_DIR/workdir/LinkTarget/Library/libmergedlo.so" 2>/dev/null || true ;;
 esac
 echo ""
+
+fi # end SKIP_CONFIGURE
 
 # -----------------------------------------------------------
 # Step 5: Build

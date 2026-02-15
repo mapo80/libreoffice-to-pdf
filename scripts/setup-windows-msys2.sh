@@ -80,6 +80,10 @@ echo ""
 # Step 5: Verify tools
 # -----------------------------------------------------------
 echo ">>> Step 5: Verifying tools..."
+
+# Add MinGW64 bin to PATH for NASM verification
+export PATH="/mingw64/bin:$PATH"
+
 ERRORS=0
 
 check_tool() {

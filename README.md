@@ -782,7 +782,45 @@ brew install autoconf automake libtool pkg-config ccache \
 
 > macOS notes: GNU Make >= 4.0 required (macOS ships 3.81). `--disable-gui` is not supported on macOS (uses Quartz VCL). `build.sh` handles all platform differences automatically — always use it instead of running `make` directly.
 
-**Windows prerequisites:** MSYS2 (bash/make/autoconf) + MSVC (cl.exe) + `choco install nasm`. See `build-windows.yml` for the full CI setup.
+**Windows prerequisites:** Visual Studio 2022/2026 (C++ desktop workload), Python 3.11+ (python.org), MSYS2 (`C:\msys64`). See the [Windows build scripts](#windows-build-scripts) section below for the full local build workflow.
+
+### Windows build scripts
+
+Local Windows builds use a set of scripts that handle MSVC toolchain discovery, MSYS2 environment setup, and architecture auto-detection. The recommended workflow is:
+
+```powershell
+# 1. Install prerequisites (Visual Studio, Python, MSYS2)
+.\scripts\setup-prerequisites.ps1
+
+# 2. Open MSYS2 MSYS shell and run the environment setup
+./scripts/setup-windows-msys2.sh
+
+# 3. Launch the build from PowerShell (loads vcvarsall then calls MSYS2)
+.\scripts\Start-WindowsBuild.ps1
+
+# Or: resume a build skipping clone/configure (incremental)
+.\scripts\Start-WindowsBuild.ps1 -SkipConfigure
+
+# Or: use the batch launcher
+.\scripts\run-windows-build.bat
+```
+
+| File | Purpose | Usage |
+|------|---------|-------|
+| `scripts/Start-WindowsBuild.ps1` | PowerShell launcher. Loads `vcvarsall.bat x64`, then invokes MSYS2 with the build. | `.\scripts\Start-WindowsBuild.ps1 [-BuildOnly] [-SkipConfigure] [-Parallelism 8] [-Aggressive]` |
+| `scripts/run-windows-build.bat` | Batch launcher. Same as above but for `cmd.exe`. | `.\scripts\run-windows-build.bat` |
+| `scripts/setup-prerequisites.ps1` | Checks and installs prerequisites (VS, Python, MSYS2) via `winget`. | `.\scripts\setup-prerequisites.ps1` |
+| `scripts/setup-windows-msys2.sh` | Installs MSYS2 packages, creates `pkgconf` and `wslpath` shims. Run once inside MSYS2 MSYS shell. | `./scripts/setup-windows-msys2.sh` |
+| `scripts/windows-build.sh` | Build wrapper called by the launchers. Auto-detects MSVC `cl.exe`, Windows Python, NASM, and target architecture. | Called automatically; can also run directly from MSYS2 after `vcvarsall`. |
+| `scripts/windows-debug-harfbuzz.sh` | Diagnostic tool for the most common build failure (HarfBuzz Meson). Dumps compiler paths, cross-file, and environment. | `./scripts/windows-debug-harfbuzz.sh` |
+| `patches/021-support-vs2026.sh` | Adds Visual Studio 2026 (v18.x, toolset v145) support to LibreOffice's `configure.ac`. | Applied automatically by `build.sh`. |
+| `patches/022-fix-external-patch-line-endings.sh` | Converts CRLF patch files to LF. Required because MSVC builds use `--binary` patch mode. | Applied automatically by `build.sh`. |
+| `distro-configs/SlimLO-windows.conf` | Windows-specific `configure` flags (MSVC, static externals, disabled GUI). | Selected automatically by `build.sh` on Windows. |
+
+> **Notes:**
+> - MSYS2 runs under x64 Prism emulation on ARM64 Windows, so `vcvarsall` always uses `x64`. The produced binaries are x64 and run on ARM64 via emulation.
+> - `SKIP_CONFIGURE=1` (or `-SkipConfigure`) skips clone, patching, and configure steps — useful for incremental rebuilds after fixing a build error.
+> - HarfBuzz Meson is the most common failure point. Use `windows-debug-harfbuzz.sh` for diagnostics.
 
 ### Output layout
 
@@ -982,12 +1020,15 @@ apk add --no-cache \
 ├── LO_VERSION                     # Pinned LO tag
 ├── icu-filter.json                # ICU data filter (en-US only)
 ├── distro-configs/
-│   ├── SlimLO.conf                # Linux/Windows configure flags
-│   └── SlimLO-macOS.conf          # macOS configure flags
-├── patches/                       # 22 patch scripts (+ post-autogen)
+│   ├── SlimLO.conf                # Linux configure flags
+│   ├── SlimLO-macOS.conf          # macOS configure flags
+│   └── SlimLO-windows.conf        # Windows configure flags (MSVC)
+├── patches/                       # 22+ patch scripts (+ post-autogen)
 │   ├── 001..008-*.sh              # Core SlimLO build pruning/fixes
 │   ├── 009-*.postautogen          # Post-autogen link/LTO fix
 │   ├── 010..020-*.sh              # ICU/Windows/LOKit/platform fixes
+│   ├── 021-support-vs2026.sh      # Visual Studio 2026 support
+│   ├── 022-fix-external-patch-line-endings.sh  # CRLF→LF for MSVC
 │   └── ...                        # See patch table above
 ├── scripts/
 │   ├── build.sh                   # Cross-platform build pipeline
@@ -995,7 +1036,13 @@ apk add --no-cache \
 │   ├── extract-artifacts.sh       # Artifact extraction + pruning
 │   ├── docker-build.sh            # Docker build orchestrator
 │   ├── pack-nuget.sh              # NuGet packaging
-│   └── pack-maven.sh              # Maven packaging
+│   ├── pack-maven.sh              # Maven packaging
+│   ├── Start-WindowsBuild.ps1     # Windows: PowerShell build launcher
+│   ├── run-windows-build.bat      # Windows: Batch build launcher
+│   ├── setup-prerequisites.ps1    # Windows: Prerequisites installer
+│   ├── setup-windows-msys2.sh     # Windows: MSYS2 environment setup
+│   ├── windows-build.sh           # Windows: Build wrapper (MSVC/Python auto-detect)
+│   └── windows-debug-harfbuzz.sh  # Windows: HarfBuzz Meson diagnostics
 ├── slimlo-api/                    # C API + worker process
 │   ├── CMakeLists.txt             # Cross-platform CMake
 │   ├── include/slimlo.h           # Public C header
