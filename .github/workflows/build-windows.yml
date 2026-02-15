@@ -42,7 +42,7 @@ jobs:
         shell: msys2 {0}
         run: |
           # LO (build_os=cygwin) expects a working pkgconf-2.4.3.exe
-          pacman -S --noconfirm mingw-w64-x86_64-pkgconf mingw-w64-x86_64-nasm
+          pacman -S --noconfirm mingw-w64-x86_64-pkgconf mingw-w64-x86_64-nasm mingw-w64-x86_64-ninja
           export PATH="/usr/local/bin:/mingw64/bin:$PATH"
           mkdir -p /usr/local/bin
           ln -sf /usr/bin/cygpath /usr/local/bin/wslpath
