@@ -113,7 +113,6 @@ fi
 cat > "$TARGET.sed" <<'EOF'
 s|^ar = '$(AR)'$|ar = '$(cross_ar)'|
 s|^strip = '$(STRIP)'$|strip = '$(cross_strip)'|
-s|^\([[:space:]]*\)-Dgraphite2=enabled \\$|\1-Dgraphite2=$(if $(filter WNT,$(OS)),disabled,enabled) \\|
 EOF
 sed -f "$TARGET.sed" "$TARGET" > "$TARGET.tmp" && mv "$TARGET.tmp" "$TARGET"
 rm -f "$TARGET.sed"
