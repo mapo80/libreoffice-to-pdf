@@ -1,3 +1,5 @@
+using System;
+using System.IO;
 using System.Runtime.InteropServices;
 
 namespace SlimLO.Internal;
@@ -10,6 +12,7 @@ internal static partial class NativeMethods
 {
     private const string LibraryName = "slimlo";
 
+#if NET8_0_OR_GREATER
     static NativeMethods()
     {
         NativeLibrary.SetDllImportResolver(
@@ -34,21 +37,21 @@ internal static partial class NativeMethods
                           ?? AppContext.BaseDirectory;
 
         string libFileName;
-        if (OperatingSystem.IsWindows())
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             libFileName = "slimlo.dll";
-        else if (OperatingSystem.IsMacOS())
+        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             libFileName = "libslimlo.dylib";
         else
             libFileName = "libslimlo.so";
 
         var rid = RuntimeInformation.RuntimeIdentifier;
-        string[] searchPaths =
-        [
+        string[] searchPaths = new[]
+        {
             Path.Combine(assemblyDir, "runtimes", rid, "native", libFileName),
             Path.Combine(assemblyDir, "native", libFileName),
             Path.Combine(assemblyDir, libFileName),
             Path.Combine(assemblyDir, "program", libFileName),
-        ];
+        };
 
         foreach (var path in searchPaths)
         {
@@ -58,4 +61,12 @@ internal static partial class NativeMethods
 
         return IntPtr.Zero;
     }
+#else
+    // .NET Standard 2.0 / .NET Framework: classic DllImport without custom resolver.
+    // The native library must be in the application output directory (NuGet .targets handles this)
+    // or on the system PATH.
+    [DllImport(LibraryName, EntryPoint = "slimlo_version",
+        CharSet = CharSet.Ansi, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern string? GetVersion();
+#endif
 }

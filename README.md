@@ -1,6 +1,6 @@
 # SlimLO
 
-**Minimal LibreOffice build for DOCX-to-PDF conversion, with .NET and C APIs.**
+**Minimal LibreOffice build for DOCX-to-PDF conversion, with .NET, Java and C APIs.**
 
 [![Build Linux x64](https://github.com/mapo80/libreoffice-to-pdf/actions/workflows/build-linux-x64.yml/badge.svg)](https://github.com/mapo80/libreoffice-to-pdf/actions/workflows/build-linux-x64.yml)
 [![Build Linux arm64](https://github.com/mapo80/libreoffice-to-pdf/actions/workflows/build-linux-arm64.yml/badge.svg)](https://github.com/mapo80/libreoffice-to-pdf/actions/workflows/build-linux-arm64.yml)
@@ -17,57 +17,65 @@ SlimLO is **not a fork**. It applies idempotent patch scripts to vanilla LibreOf
 | **Artifact size (docx-aggressive)** | ~134 MB (macOS local, `2026-02-14`) |
 | **Merged lib** | ~65 MB `.dylib` (macOS local, stripped) |
 | **LO version** | `libreoffice-25.8.5.1` |
-| **.NET tests** | 170 passing |
+| **.NET tests** | 195 passing (net8.0 + net6.0) |
+| **Java tests** | 38 passing |
 
 ---
 
 ## Architecture
 
-SlimLO strips LibreOffice down to its Writer engine + UNO + DOCX/PDF conversion path, merges everything into a single shared library via `--enable-mergelibs` + LTO, and exposes it through two APIs:
+SlimLO strips LibreOffice down to its Writer engine + UNO + DOCX/PDF conversion path, merges everything into a single shared library via `--enable-mergelibs` + LTO, and exposes it through three APIs:
 
 ```
                         ┌─────────────────────┐
                         │   Your Application   │
                         └──────────┬──────────┘
                                    │
-               ┌───────────────────┴───────────────────┐
-               │                                       │
-       .NET SDK (async)                          C API (direct)
-               │                                       │
-      ┌────────┴────────┐                    #include "slimlo.h"
-      │   PdfConverter   │                             │
-      │                  │                             │
-      │   WorkerPool     │                             │
-      │   ├─ worker[0] ──┼── stdin/stdout ──┐          │
-      │   ├─ worker[1] ──┼── stdin/stdout ──┤          │
-      │   └─ worker[N] ──┼── stdin/stdout ──┤          │
-      └─────────────────┘                   │          │
-                                            ▼          ▼
-                               ┌────────────────────────────┐
-                               │  libslimlo.{so,dylib,dll}  │
-                               │      (C API wrapper)       │
-                               └─────────────┬──────────────┘
-                                             │
-                                     LibreOfficeKit
-                                             │
-                               ┌─────────────┴──────────────┐
-                               │ libmergedlo.{so,dylib,dll}  │
-                               │   ~65 MB · LTO · stripped   │
-                               │   Writer + UNO + filters    │
-                               └─────────────────────────────┘
+          ┌────────────────────────┼───────────────────────┐
+          │                        │                       │
+  .NET SDK (async)         Java SDK (sync+async)     C API (direct)
+          │                        │                       │
+ ┌────────┴────────┐    ┌─────────┴────────┐    #include "slimlo.h"
+ │  PdfConverter    │    │  PdfConverter     │             │
+ │                  │    │                   │             │
+ │  WorkerPool      │    │  WorkerPool       │             │
+ │  ├─ worker[0] ───┼─┐  │  ├─ worker[0] ───┼─┐           │
+ │  ├─ worker[1] ───┼─┤  │  ├─ worker[1] ───┼─┤           │
+ │  └─ worker[N] ───┼─┤  │  └─ worker[N] ───┼─┤           │
+ └──────────────────┘ │  └──────────────────┘ │           │
+                      ▼                       ▼           ▼
+                      ┌────────────────────────────────────┐
+                      │     slimlo_worker (native IPC)     │
+                      │    libslimlo.{so,dylib,dll}        │
+                      └──────────────┬─────────────────────┘
+                                     │
+                             LibreOfficeKit
+                                     │
+                       ┌─────────────┴──────────────┐
+                       │ libmergedlo.{so,dylib,dll}  │
+                       │   ~65 MB · LTO · stripped   │
+                       │   Writer + UNO + filters    │
+                       └─────────────────────────────┘
 ```
 
 **Key design decisions:**
 
 - **Patch-based, not a fork** — 22 patch scripts (including one post-autogen patch) modify vanilla LO source. No `git .patch` files — scripts are resilient to upstream line-number changes and easy to maintain across LO upgrades.
 - **Single merged library** — `--enable-mergelibs` + LTO combines hundreds of LO modules into one `libmergedlo`. Dead code elimination + aggressive stripping reduces 1.5 GB to ~146 MB (`compat`) or ~134 MB (`docx-aggressive`, macOS local).
-- **Process isolation** (.NET) — Each conversion runs in a separate native `slimlo_worker` process. LibreOffice crash on a malformed document kills only the worker, never the host application.
+- **Process isolation** (.NET / Java) — Each conversion runs in a separate native `slimlo_worker` process. LibreOffice crash on a malformed document kills only the worker, never the host application.
+- **Same worker, multiple SDKs** — Both .NET and Java SDKs spawn the same `slimlo_worker` binary and communicate via the same length-prefixed JSON IPC protocol over stdin/stdout pipes.
 
 ---
 
 ## .NET SDK
 
-The .NET SDK is the primary way to use SlimLO. It provides a thread-safe, async API with process isolation, crash recovery, and font diagnostics.
+The .NET SDK provides a thread-safe, async API with process isolation, crash recovery, and font diagnostics. Multi-targets `netstandard2.0` and `net8.0`.
+
+| Runtime | Target consumed | Notes |
+|---------|----------------|-------|
+| .NET 8+ | `net8.0` | Full features: `LibraryImport`, source-generated JSON, `NativeLibrary` resolver |
+| .NET 6 / 7 | `netstandard2.0` | Full features via polyfills. Classic `[DllImport]`, reflection-based JSON |
+| .NET Framework 4.6.1+ | `netstandard2.0` | Fully supported. See [.NET Framework notes](#net-framework-notes) below |
 
 > Supported input format is **DOCX only**. `DocumentFormat.Xlsx` / `DocumentFormat.Pptx` are kept for binary compatibility and return `InvalidFormat`.
 
@@ -105,7 +113,7 @@ using SlimLO;
 await using var converter = PdfConverter.Create(new PdfConverterOptions
 {
     ResourcePath = "/opt/slimlo",             // auto-detected if not set
-    FontDirectories = ["/app/fonts"],         // custom fonts (cross-platform)
+    FontDirectories = new[] { "/app/fonts" },  // custom fonts (cross-platform)
     MaxWorkers = 2,                           // parallel worker processes
     MaxConversionsPerWorker = 100,            // recycle after N conversions
     ConversionTimeout = TimeSpan.FromMinutes(5),
@@ -217,12 +225,12 @@ if (result.HasFontWarnings)
 | `ConversionTimeout` | 5 min | Per-conversion timeout. Worker killed on timeout. |
 | `WarmUp` | `false` | Pre-start all workers during `Create()`. |
 
-**`ConversionOptions`** — Per-conversion settings (record).
+**`ConversionOptions`** — Per-conversion settings.
 
 | Property | Default | Description |
 |----------|---------|-------------|
 | `PdfVersion` | `Default` (1.7) | `PdfA1`, `PdfA2`, `PdfA3` for archival. |
-| `JpegQuality` | 0 (= 90) | JPEG compression quality 1–100. |
+| `JpegQuality` | 0 (= 90) | JPEG compression quality 1-100. |
 | `Dpi` | 0 (= 300) | Maximum image resolution. |
 | `TaggedPdf` | `false` | Tagged PDF for accessibility. |
 | `PageRange` | `null` (all) | e.g., `"1-5"` or `"1,3,5-7"`. |
@@ -303,7 +311,367 @@ SLIMLO_WORKER_PATH=../slimlo-api/build/slimlo_worker \
 dotnet test
 ```
 
-**Test suite:** 170 tests covering all public types, IPC protocol, diagnostic parsing, end-to-end conversion with DOCX fixtures (multi-font, Unicode, rich formatting, large documents, missing fonts, custom font loading), concurrent conversions, dispose behavior, DOCX-only enforcement, and error handling.
+**Test suite:** 195 tests covering all public types, IPC protocol (binary framing + JSON serialization), polyfills, diagnostic parsing, end-to-end conversion with DOCX fixtures (multi-font, Unicode, rich formatting, large documents, missing fonts, custom font loading), concurrent conversions, dispose behavior, DOCX-only enforcement, and error handling. Tests run on both `net8.0` and `net6.0` (which consumes the `netstandard2.0` build), for a total of 390 test executions.
+
+### .NET Framework notes
+
+The SDK fully supports .NET Framework 4.6.1+ via the `netstandard2.0` target. The API surface is identical across all runtimes. A few internal behaviors differ:
+
+| Behavior | .NET 8 | .NET Framework 4.6.1+ |
+|----------|--------|----------------------|
+| P/Invoke | `LibraryImport` (source-generated) | Classic `[DllImport]` |
+| JSON serialization | Source-generated (`JsonSerializerContext`) | Reflection-based (`System.Text.Json` NuGet) |
+| DLL resolution | `NativeLibrary.SetDllImportResolver` (custom search) | Standard DLL search order (output directory, PATH) |
+| Process cleanup | `Process.Kill(entireProcessTree: true)` | `Process.Kill()` (single process) |
+| Async file I/O | `File.ReadAllBytesAsync` (native) | `Task.Run(() => File.ReadAllBytes(...))` |
+
+**None of these differences affect the public API or conversion results.** The `SlimLO.NativeAssets.*` NuGet packages include `.targets` files that copy native assets to the output directory, so DLL resolution works out of the box.
+
+**NuGet packages required:**
+
+```xml
+<PackageReference Include="SlimLO" Version="0.1.0" />
+<!-- Plus the platform-specific native assets package -->
+```
+
+The `SlimLO` package automatically brings in these polyfill dependencies for `netstandard2.0` consumers:
+- `System.Memory` (4.5.5) — `ReadOnlyMemory<byte>`, `Span<T>`
+- `System.Text.Json` (8.0.5) — JSON serialization
+- `System.Threading.Tasks.Extensions` (4.5.4) — `ValueTask`
+- `Microsoft.Bcl.AsyncInterfaces` (8.0.0) — `IAsyncDisposable`
+
+---
+
+## Java SDK
+
+The Java SDK provides the same process-isolated, thread-safe conversion as the .NET SDK, targeting **Java 8+** for maximum compatibility. It reuses the same `slimlo_worker` binary and IPC protocol — no JNI required.
+
+> Supported input format is **DOCX only**. `DocumentFormat.XLSX` / `DocumentFormat.PPTX` are kept for API symmetry and return `INVALID_FORMAT`.
+
+### Installation
+
+**Maven:**
+
+```xml
+<dependency>
+    <groupId>com.slimlo</groupId>
+    <artifactId>slimlo</artifactId>
+    <version>0.1.0</version>
+</dependency>
+```
+
+**Gradle:**
+
+```groovy
+implementation 'com.slimlo:slimlo:0.1.0'
+```
+
+The API JAR (~100 KB) contains only the Java SDK. Native assets (the `slimlo_worker` binary and LibreOffice libraries) must be provided separately — either via platform-specific native JARs, a tarball from GitHub Releases, or by setting the `SLIMLO_RESOURCE_PATH` environment variable.
+
+> On Linux, the host must have system libraries installed. See [Linux system dependencies](#linux-system-dependencies).
+
+### Quick start
+
+```java
+import com.slimlo.*;
+
+try (PdfConverter converter = PdfConverter.create()) {
+    ConversionResult result = converter.convert("input.docx", "output.pdf");
+    result.throwIfFailed();
+
+    System.out.println("PDF size: " + new java.io.File("output.pdf").length() + " bytes");
+}
+```
+
+### Full API examples
+
+```java
+import com.slimlo.*;
+import java.io.*;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.Arrays;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+
+// ── Create with options ──────────────────────────────────────────
+PdfConverterOptions options = PdfConverterOptions.builder()
+        .resourcePath("/opt/slimlo")                // auto-detected if not set
+        .fontDirectories(Arrays.asList("/app/fonts"))  // custom fonts (cross-platform)
+        .maxWorkers(2)                              // parallel worker processes
+        .maxConversionsPerWorker(100)               // recycle after N conversions
+        .conversionTimeout(5, TimeUnit.MINUTES)     // per-conversion timeout
+        .warmUp(true)                               // pre-start workers
+        .build();
+
+try (PdfConverter converter = PdfConverter.create(options)) {
+
+    // ── File to file ─────────────────────────────────────────────
+    ConversionResult result = converter.convert("input.docx", "output.pdf");
+    if (!result.isSuccess())
+        System.err.println("Failed: " + result.getErrorMessage()
+                + " (" + result.getErrorCode() + ")");
+
+    // ── Buffer conversion ────────────────────────────────────────
+    byte[] docxBytes = Files.readAllBytes(Paths.get("input.docx"));
+    ConversionResult bufResult = converter.convert(docxBytes, DocumentFormat.DOCX);
+    bufResult.throwIfFailed();
+    Files.write(Paths.get("output.pdf"), bufResult.getData());
+
+    // ── Stream to stream (Servlet / Spring) ──────────────────────
+    InputStream inputStream = new FileInputStream("input.docx");
+    ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+    ConversionResult streamResult = converter.convert(
+            inputStream, outputStream, DocumentFormat.DOCX);
+
+    // ── PDF options ──────────────────────────────────────────────
+    ConversionOptions pdfOptions = ConversionOptions.builder()
+            .pdfVersion(PdfVersion.PDF_A2)
+            .jpegQuality(85)
+            .dpi(150)
+            .taggedPdf(true)
+            .pageRange("1-5")
+            .build();
+
+    ConversionResult result2 = converter.convert(
+            "input.docx", "output.pdf", pdfOptions);
+
+    // ── Async (CompletableFuture) ────────────────────────────────
+    CompletableFuture<ConversionResult> future =
+            converter.convertAsync("input.docx", "output.pdf");
+    ConversionResult asyncResult = future.get(5, TimeUnit.MINUTES);
+
+    // ── Font warnings ────────────────────────────────────────────
+    if (result.hasFontWarnings()) {
+        for (ConversionDiagnostic d : result.getDiagnostics()) {
+            System.out.println("  " + d.getSeverity() + ": " + d.getMessage());
+        }
+    }
+}
+```
+
+### How it works
+
+```
+┌─ JVM Process ───────────────────────────────────────────────────┐
+│                                                                  │
+│  PdfConverter.convert(...)  /  convertAsync(...)                 │
+│       │                                                          │
+│       ▼                                                          │
+│  WorkerPool  (thread-safe, Semaphore + round-robin)              │
+│       │                                                          │
+│       ├── WorkerProcess[0] ──┐                                   │
+│       ├── WorkerProcess[1] ──┤── stdin/stdout pipes              │
+│       └── WorkerProcess[N] ──┘                                   │
+│                                                                  │
+└──────────────────────────────┼───────────────────────────────────┘
+                               │
+                   ┌───────────┴───────────┐
+                   │     slimlo_worker      │  ← separate OS process
+                   │                        │
+                   │  JSON IPC (file-path)  │  ← paths only, no data copied
+                   │  Binary IPC (buffer)   │  ← raw bytes over pipe
+                   │                        │
+                   │  libslimlo → LOKit     │
+                   │  → libmergedlo         │
+                   └────────────────────────┘
+```
+
+- **Process isolation**: A crash in LibreOffice kills only the worker. The JVM gets a failure result and the worker is auto-replaced.
+- **Two IPC modes**: File-path mode sends only paths (zero-copy); buffer mode sends raw bytes over pipes (zero disk I/O).
+- **Thread safety**: `WorkerPool` uses `java.util.concurrent.Semaphore` and `ReentrantLock` for thread-safe access. With `maxWorkers > 1`, conversions run in parallel across separate OS processes.
+- **Font diagnostics**: The worker captures LOKit stderr and parses font substitution warnings into `ConversionDiagnostic` objects.
+- **No JNI**: Pure Java — all communication with the native worker is via OS pipes and length-prefixed JSON frames.
+
+### Conversion modes
+
+| Method | IPC mode | Memory behavior |
+|--------|----------|-----------------|
+| `convert(String, String, ...)` | File-path | Worker handles all I/O. Minimal JVM memory. Format auto-detected from extension. |
+| `convert(byte[], DocumentFormat, ...)` | Buffer | Input + PDF bytes in JVM memory. Zero disk I/O. PDF bytes in `result.getData()`. |
+| `convert(InputStream, OutputStream, DocumentFormat, ...)` | Buffer | Stream read into memory, converted, PDF written to output stream. No temp files. |
+
+All sync methods have `convertAsync(...)` variants returning `CompletableFuture<ConversionResult>`.
+
+**When to use which:**
+
+- **Batch processing / large files** — `convert(inputPath, outputPath)`. Most memory-efficient: the JVM never touches document bytes.
+- **Servlet / Spring / web servers** — `convert(inputStream, outputStream, format)` to pipe request body to response. No temp files.
+- **In-memory pipelines** — `convert(byte[], format)` when you already have bytes from a database, queue, or blob storage.
+
+### API reference
+
+**`PdfConverter`** — Main entry point. Implements `Closeable`.
+
+| Method | Description |
+|--------|-------------|
+| `create()` | Create converter with default options. |
+| `create(PdfConverterOptions)` | Create converter with custom options. Workers start lazily (or eagerly with `warmUp(true)`). |
+| `convert(in, out)` | File-to-file via file-path IPC. Returns `ConversionResult`. |
+| `convert(in, out, ConversionOptions)` | File-to-file with PDF options. |
+| `convert(byte[], DocumentFormat)` | Bytes-to-PDF via buffer IPC. PDF in `result.getData()`. |
+| `convert(byte[], DocumentFormat, ConversionOptions)` | Bytes-to-PDF with PDF options. |
+| `convert(InputStream, OutputStream, DocumentFormat)` | Stream-to-stream via buffer IPC. |
+| `convert(InputStream, OutputStream, DocumentFormat, ConversionOptions)` | Stream-to-stream with PDF options. |
+| `convertAsync(...)` | Async variants of all above — returns `CompletableFuture<ConversionResult>`. |
+| `close()` | Gracefully shut down all workers (sends quit, waits 5s, then kills). |
+
+**`PdfConverterOptions.Builder`** — Converter-level configuration (builder pattern).
+
+| Method | Default | Description |
+|--------|---------|-------------|
+| `resourcePath(String)` | auto-detect | Path to SlimLO resources (containing `program/`). |
+| `fontDirectories(List<String>)` | `null` | Custom font directories. Linux: fontconfig. macOS: CoreText registration. |
+| `maxWorkers(int)` | 1 | Parallel worker processes. |
+| `maxConversionsPerWorker(int)` | 0 (unlimited) | Recycle worker after N conversions. |
+| `conversionTimeout(long, TimeUnit)` | 5 min | Per-conversion timeout. Worker killed on timeout. |
+| `warmUp(boolean)` | `false` | Pre-start all workers during `create()`. |
+
+**`ConversionOptions.Builder`** — Per-conversion settings (builder pattern).
+
+| Method | Default | Description |
+|--------|---------|-------------|
+| `pdfVersion(PdfVersion)` | `DEFAULT` (1.7) | `PDF_A1`, `PDF_A2`, `PDF_A3` for archival. |
+| `jpegQuality(int)` | 0 (= 90) | JPEG compression quality 1-100. |
+| `dpi(int)` | 0 (= 300) | Maximum image resolution. |
+| `taggedPdf(boolean)` | `false` | Tagged PDF for accessibility. |
+| `pageRange(String)` | `null` (all) | e.g., `"1-5"` or `"1,3,5-7"`. |
+| `password(String)` | `null` | Password for protected documents. |
+
+**`ConversionResult`** — Conversion outcome with diagnostics.
+
+| Method | Description |
+|--------|-------------|
+| `isSuccess()` | `true` if conversion succeeded. |
+| `getErrorMessage()` | Error description (null on success). |
+| `getErrorCode()` | `SlimLOErrorCode` enum (null on success). |
+| `getDiagnostics()` | `List<ConversionDiagnostic>` — may be non-empty even on success. |
+| `hasFontWarnings()` | `true` if any diagnostic has `category == FONT`. |
+| `getData()` | PDF bytes (buffer conversions only). Null for file-path mode or on failure. |
+| `throwIfFailed()` | Throws `SlimLOException` on failure, returns `this` on success. |
+
+**`ConversionDiagnostic`** — A single diagnostic entry.
+
+| Method | Description |
+|--------|-------------|
+| `getSeverity()` | `DiagnosticSeverity.INFO` or `WARNING` |
+| `getCategory()` | `DiagnosticCategory.GENERAL`, `FONT`, or `LAYOUT` |
+| `getMessage()` | Human-readable message |
+| `getFontName()` | Font name (if font-related, null otherwise) |
+| `getSubstitutedWith()` | Substitute font name (if substitution occurred, null otherwise) |
+
+**Enums:**
+
+| Enum | Values |
+|------|--------|
+| `DocumentFormat` | `UNKNOWN(0)`, `DOCX(1)`, `XLSX(2)`, `PPTX(3)` |
+| `PdfVersion` | `DEFAULT(0)`, `PDF_A1(1)`, `PDF_A2(2)`, `PDF_A3(3)` |
+| `SlimLOErrorCode` | `OK(0)`, `INIT_FAILED(1)`, `LOAD_FAILED(2)`, `CONVERT_FAILED(3)`, `FILE_NOT_FOUND(4)`, `INVALID_FORMAT(5)`, `INVALID_ARGUMENT(6)`, `NOT_INITIALIZED(7)`, `UNKNOWN(99)` |
+
+### Deploying to Linux (Java)
+
+**Docker (recommended):**
+
+```dockerfile
+FROM maven:3.9-eclipse-temurin-17 AS build
+WORKDIR /src
+COPY . .
+RUN mvn clean package -pl myapp -am -DskipTests
+
+FROM eclipse-temurin:17-jre-noble
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libfontconfig1 libfreetype6 libexpat1 libcairo2 libpng16-16 \
+    libjpeg-turbo8 libxml2 libxslt1.1 libicu74 libnss3 libnspr4 \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY --from=build /src/myapp/target/myapp.jar .
+COPY slimlo-resources/ /opt/slimlo/
+ENV SLIMLO_RESOURCE_PATH=/opt/slimlo
+ENTRYPOINT ["java", "-jar", "myapp.jar"]
+```
+
+**Bare-metal / VM:** Install the [system dependencies](#linux-system-dependencies), extract the SlimLO tarball, and set `SLIMLO_RESOURCE_PATH`.
+
+### Deploying to macOS (Java)
+
+No additional system dependencies needed — macOS system frameworks suffice. Set `SLIMLO_RESOURCE_PATH` to point to the extracted native assets.
+
+### Environment variables
+
+| Variable | Description |
+|----------|-------------|
+| `SLIMLO_RESOURCE_PATH` | Override auto-detected resource directory. The SDK searches for `program/libmergedlo.{so,dylib,dll}` or `program/sofficerc` inside this directory. |
+| `SLIMLO_WORKER_PATH` | Override auto-detected `slimlo_worker` executable path. |
+
+### Worker locator search order
+
+The Java SDK searches for the `slimlo_worker` executable in this order:
+
+1. Same directory as the SDK JAR
+2. `native/` subdirectory of the JAR location
+3. `program/` subdirectory of the JAR location
+4. `SLIMLO_WORKER_PATH` environment variable
+5. `SLIMLO_RESOURCE_PATH/program/` environment variable
+
+The resource directory is searched in this order:
+
+1. Same directory as the JAR (checks for `program/` subdirectory)
+2. `slimlo-resources/` subdirectory of the JAR location
+3. Parent directory
+4. `SLIMLO_RESOURCE_PATH` environment variable
+
+### Running tests
+
+```bash
+cd java
+
+# Unit tests only (no native dependencies)
+mvn test -pl slimlo
+
+# All tests including integration (requires native artifacts)
+SLIMLO_RESOURCE_PATH=/path/to/slimlo-output mvn test -pl slimlo
+```
+
+**Test suite:** 38 tests covering IPC protocol framing, result model, diagnostics, end-to-end file-to-file conversion, buffer conversion (byte[]), stream conversion (InputStream/OutputStream), PDF options, DOCX-only enforcement, and error handling.
+
+### Building the JAR
+
+```bash
+# Build and run tests
+./scripts/pack-maven.sh
+
+# Output: java/slimlo/target/slimlo-0.1.0.jar
+```
+
+### Dependencies
+
+| Dependency | Version | Scope | Size |
+|------------|---------|-------|------|
+| [Gson](https://github.com/google/gson) | 2.11.0 | compile | ~280 KB |
+| [JUnit 5](https://junit.org/junit5/) | 5.10.3 | test | — |
+
+Gson is the only runtime dependency (zero transitive dependencies, Java 8+).
+
+---
+
+## .NET vs Java SDK comparison
+
+Both SDKs share the same architecture (process-isolated worker pool) and IPC protocol. Key differences:
+
+| Feature | .NET SDK | Java SDK |
+|---------|----------|----------|
+| **Minimum version** | .NET Framework 4.6.1 / .NET 6+ | Java 8 |
+| **API style** | Async-first (`async`/`await`) | Sync-first + `CompletableFuture` async |
+| **Lifecycle** | `IAsyncDisposable` + `IDisposable` | `Closeable` (`try-with-resources`) |
+| **Options** | Object initializers (`init` setters) | Builder pattern |
+| **Cancellation** | `CancellationToken` on every method | Timeout only (via `Future.get(timeout)`) |
+| **Buffer input** | `ReadOnlyMemory<byte>` (zero-copy) | `byte[]` |
+| **Result pattern** | `if (result)` (implicit bool) | `result.isSuccess()` |
+| **Typed buffer result** | `ConversionResult<byte[]>` | `result.getData()` on same `ConversionResult` |
+| **Packaging** | NuGet (managed + native asset packages) | Maven (API JAR + separate native tarball) |
+| **JSON library** | System.Text.Json (built-in, AOT) | Gson (~280 KB, zero deps) |
+| **Test count** | 195 tests (x2 TFMs = 390) | 38 tests |
+| **Stream overloads** | 5 overloads (Stream, file, mixed) | 3 overloads (file, buffer, stream) |
 
 ---
 
@@ -345,7 +713,7 @@ int main() {
 
 **PDF options (`SlimLOPdfOptions`):** version (1.7 / PDF/A-1,2,3), JPEG quality, DPI, tagged PDF, page range, password.
 
-**Thread safety:** Conversions serialized via internal mutex. For concurrency, use multiple processes (or the .NET SDK).
+**Thread safety:** Conversions serialized via internal mutex. For concurrency, use multiple processes (or the .NET/Java SDK).
 
 ---
 
@@ -514,7 +882,7 @@ macOS uses a different directory structure inside `.app/Contents/`. Build script
 
 ### Custom font loading
 
-`PdfConverterOptions.FontDirectories` works cross-platform:
+Both `PdfConverterOptions.FontDirectories` (.NET) and `PdfConverterOptions.Builder.fontDirectories()` (Java) work cross-platform:
 
 | Platform | Mechanism | Details |
 |----------|-----------|---------|
@@ -573,7 +941,7 @@ Full LibreOffice `instdir/` is **~1.5 GB**. SlimLO reduces it in three stages:
 
 ### Linux system dependencies
 
-The NuGet package bundles the LibreOffice engine but **not** system-level shared libraries.
+The NuGet/Maven packages bundle the LibreOffice engine but **not** system-level shared libraries.
 
 **Ubuntu / Debian:**
 
@@ -601,9 +969,9 @@ apk add --no-cache \
     libxml2 libxslt icu-libs nss nspr
 ```
 
-**Optional:** Install `fonts-liberation` for accurate text rendering, or use `PdfConverterOptions.FontDirectories` for custom fonts.
+**Optional:** Install `fonts-liberation` for accurate text rendering, or use `FontDirectories` in your SDK options for custom fonts.
 
-**Troubleshooting:** If the worker crashes at startup with `error while loading shared libraries`, install the missing library. The .NET SDK includes the library name in the exception message.
+**Troubleshooting:** If the worker crashes at startup with `error while loading shared libraries`, install the missing library. Both the .NET and Java SDKs include the library name in the exception message.
 
 ---
 
@@ -626,7 +994,8 @@ apk add --no-cache \
 │   ├── apply-patches.sh           # Runs all patches in order
 │   ├── extract-artifacts.sh       # Artifact extraction + pruning
 │   ├── docker-build.sh            # Docker build orchestrator
-│   └── pack-nuget.sh              # NuGet packaging
+│   ├── pack-nuget.sh              # NuGet packaging
+│   └── pack-maven.sh              # Maven packaging
 ├── slimlo-api/                    # C API + worker process
 │   ├── CMakeLists.txt             # Cross-platform CMake
 │   ├── include/slimlo.h           # Public C header
@@ -635,8 +1004,8 @@ apk add --no-cache \
 │       ├── slimlo_worker.c        # IPC worker (stdin/stdout JSON)
 │       └── cjson/                 # Vendored cJSON (MIT)
 ├── dotnet/
-│   ├── SlimLO/                    # .NET 8 SDK
-│   │   ├── PdfConverter.cs        # Public API
+│   ├── SlimLO/                    # .NET SDK (netstandard2.0 + net8.0)
+│   │   ├── PdfConverter.cs        # Public API (async/await)
 │   │   ├── ConversionResult.cs    # Result with diagnostics
 │   │   └── Internal/              # Worker management
 │   │       ├── WorkerPool.cs      # Thread-safe pool
@@ -644,7 +1013,19 @@ apk add --no-cache \
 │   │       └── Protocol.cs        # Length-prefixed JSON framing
 │   ├── SlimLO.NativeAssets.Linux/ # Native NuGet (linux-x64 + arm64)
 │   ├── SlimLO.NativeAssets.macOS/ # Native NuGet (osx-arm64 + x64)
-│   └── SlimLO.Tests/             # 170 xUnit tests
+│   └── SlimLO.Tests/             # 195 xUnit tests (net8.0 + net6.0)
+├── java/
+│   ├── pom.xml                    # Parent POM (multi-module)
+│   ├── slimlo/                    # Java SDK (Java 8+, Gson)
+│   │   ├── pom.xml               # com.slimlo:slimlo:0.1.0
+│   │   └── src/main/java/com/slimlo/
+│   │       ├── PdfConverter.java  # Public API (sync + CompletableFuture)
+│   │       ├── ConversionResult.java
+│   │       └── internal/          # Worker management
+│   │           ├── WorkerPool.java
+│   │           ├── WorkerProcess.java
+│   │           └── Protocol.java
+│   └── example/                   # Example Java console app
 ├── docker/
 │   └── Dockerfile.linux-x64      # Multi-stage Docker build
 ├── .github/workflows/

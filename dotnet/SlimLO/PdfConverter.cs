@@ -1,3 +1,7 @@
+using System;
+using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
 using SlimLO.Internal;
 
 namespace SlimLO;
@@ -38,7 +42,7 @@ namespace SlimLO;
 /// <code>
 /// await using var converter = PdfConverter.Create(new PdfConverterOptions
 /// {
-///     FontDirectories = ["/usr/share/fonts/custom"],
+///     FontDirectories = new[] { "/usr/share/fonts/custom" },
 ///     MaxWorkers = 2
 /// });
 ///
@@ -129,9 +133,9 @@ public sealed class PdfConverter : IAsyncDisposable, IDisposable
         ConversionOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        ArgumentException.ThrowIfNullOrEmpty(inputPath);
-        ArgumentException.ThrowIfNullOrEmpty(outputPath);
+        ThrowHelpers.ThrowIfDisposed(_disposed, this);
+        ThrowHelpers.ThrowIfNullOrEmpty(inputPath);
+        ThrowHelpers.ThrowIfNullOrEmpty(outputPath);
 
         inputPath = Path.GetFullPath(inputPath);
         outputPath = Path.GetFullPath(outputPath);
@@ -182,7 +186,7 @@ public sealed class PdfConverter : IAsyncDisposable, IDisposable
         ConversionOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ThrowHelpers.ThrowIfDisposed(_disposed, this);
 
         if (input.IsEmpty)
             return ConversionResult<byte[]>.Fail(
@@ -218,9 +222,9 @@ public sealed class PdfConverter : IAsyncDisposable, IDisposable
         ConversionOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        ArgumentNullException.ThrowIfNull(input);
-        ArgumentNullException.ThrowIfNull(output);
+        ThrowHelpers.ThrowIfDisposed(_disposed, this);
+        ThrowHelpers.ThrowIfNull(input);
+        ThrowHelpers.ThrowIfNull(output);
 
         if (!input.CanRead)
             return ConversionResult.Fail("Input stream is not readable",
@@ -235,8 +239,14 @@ public sealed class PdfConverter : IAsyncDisposable, IDisposable
         var result = await ConvertBufferCoreAsync(inputBytes, format, options, cancellationToken)
             .ConfigureAwait(false);
 
-        if (result.Success && result.Data is not null)
+        if (result.Success && result.Data != null)
+        {
+#if NET8_0_OR_GREATER
             await output.WriteAsync(result.Data, cancellationToken).ConfigureAwait(false);
+#else
+            await output.WriteAsync(result.Data, 0, result.Data.Length, cancellationToken).ConfigureAwait(false);
+#endif
+        }
 
         return result.AsBase();
     }
@@ -262,9 +272,9 @@ public sealed class PdfConverter : IAsyncDisposable, IDisposable
         ConversionOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        ArgumentNullException.ThrowIfNull(input);
-        ArgumentException.ThrowIfNullOrEmpty(outputPath);
+        ThrowHelpers.ThrowIfDisposed(_disposed, this);
+        ThrowHelpers.ThrowIfNull(input);
+        ThrowHelpers.ThrowIfNullOrEmpty(outputPath);
 
         if (!input.CanRead)
             return ConversionResult.Fail("Input stream is not readable",
@@ -276,9 +286,16 @@ public sealed class PdfConverter : IAsyncDisposable, IDisposable
         var result = await ConvertBufferCoreAsync(inputBytes, format, options, cancellationToken)
             .ConfigureAwait(false);
 
-        if (result.Success && result.Data is not null)
+        if (result.Success && result.Data != null)
+        {
+#if NET8_0_OR_GREATER
             await File.WriteAllBytesAsync(outputPath, result.Data, cancellationToken)
                 .ConfigureAwait(false);
+#else
+            await Task.Run(() => File.WriteAllBytes(outputPath, result.Data), cancellationToken)
+                .ConfigureAwait(false);
+#endif
+        }
 
         return result.AsBase();
     }
@@ -303,9 +320,9 @@ public sealed class PdfConverter : IAsyncDisposable, IDisposable
         ConversionOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        ArgumentException.ThrowIfNullOrEmpty(inputPath);
-        ArgumentNullException.ThrowIfNull(output);
+        ThrowHelpers.ThrowIfDisposed(_disposed, this);
+        ThrowHelpers.ThrowIfNullOrEmpty(inputPath);
+        ThrowHelpers.ThrowIfNull(output);
 
         if (!output.CanWrite)
             return ConversionResult.Fail("Output stream is not writable",
@@ -322,13 +339,24 @@ public sealed class PdfConverter : IAsyncDisposable, IDisposable
         if (!IsSupportedFormat(format))
             return InvalidFormatFailure(format, "file conversion");
 
+#if NET8_0_OR_GREATER
         var inputBytes = await File.ReadAllBytesAsync(inputPath, cancellationToken)
             .ConfigureAwait(false);
+#else
+        var inputBytes = await Task.Run(() => File.ReadAllBytes(inputPath), cancellationToken)
+            .ConfigureAwait(false);
+#endif
         var result = await ConvertBufferCoreAsync(inputBytes, format, options, cancellationToken)
             .ConfigureAwait(false);
 
-        if (result.Success && result.Data is not null)
+        if (result.Success && result.Data != null)
+        {
+#if NET8_0_OR_GREATER
             await output.WriteAsync(result.Data, cancellationToken).ConfigureAwait(false);
+#else
+            await output.WriteAsync(result.Data, 0, result.Data.Length, cancellationToken).ConfigureAwait(false);
+#endif
+        }
 
         return result.AsBase();
     }
@@ -433,11 +461,12 @@ public sealed class PdfConverter : IAsyncDisposable, IDisposable
     {
         if (stream is MemoryStream ms && ms.TryGetBuffer(out var segment))
         {
-            return segment.AsMemory()[(int)(ms.Position - segment.Offset)..];
+            var offset = (int)(ms.Position - segment.Offset);
+            return segment.AsMemory().Slice(offset);
         }
 
         using var buffer = new MemoryStream();
-        await stream.CopyToAsync(buffer, ct).ConfigureAwait(false);
+        await stream.CopyToAsync(buffer, 81920, ct).ConfigureAwait(false);
         return buffer.ToArray();
     }
 }

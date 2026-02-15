@@ -1,6 +1,11 @@
+using System;
 using System.Buffers.Binary;
+using System.Collections.Generic;
+using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace SlimLO.Internal;
 
@@ -17,8 +22,13 @@ internal static class Protocol
     {
         var lengthBytes = new byte[4];
         BinaryPrimitives.WriteUInt32LittleEndian(lengthBytes, (uint)payload.Length);
+#if NET8_0_OR_GREATER
         await stream.WriteAsync(lengthBytes, ct).ConfigureAwait(false);
         await stream.WriteAsync(payload, ct).ConfigureAwait(false);
+#else
+        await stream.WriteAsync(lengthBytes, 0, lengthBytes.Length, ct).ConfigureAwait(false);
+        await stream.WriteAsync(payload, 0, payload.Length, ct).ConfigureAwait(false);
+#endif
         await stream.FlushAsync(ct).ConfigureAwait(false);
     }
 
@@ -27,8 +37,15 @@ internal static class Protocol
     {
         var lengthBytes = new byte[4];
         BinaryPrimitives.WriteUInt32LittleEndian(lengthBytes, (uint)payload.Length);
+#if NET8_0_OR_GREATER
         await stream.WriteAsync(lengthBytes, ct).ConfigureAwait(false);
         await stream.WriteAsync(payload, ct).ConfigureAwait(false);
+#else
+        await stream.WriteAsync(lengthBytes, 0, lengthBytes.Length, ct).ConfigureAwait(false);
+        // ReadOnlyMemory<byte> → byte[] for NS2.0 Stream.WriteAsync overload
+        var payloadArray = payload.ToArray();
+        await stream.WriteAsync(payloadArray, 0, payloadArray.Length, ct).ConfigureAwait(false);
+#endif
         await stream.FlushAsync(ct).ConfigureAwait(false);
     }
 
@@ -60,8 +77,13 @@ internal static class Protocol
         int totalRead = 0;
         while (totalRead < buffer.Length)
         {
+#if NET8_0_OR_GREATER
             int read = await stream.ReadAsync(
                 buffer.AsMemory(totalRead, buffer.Length - totalRead), ct).ConfigureAwait(false);
+#else
+            int read = await stream.ReadAsync(
+                buffer, totalRead, buffer.Length - totalRead, ct).ConfigureAwait(false);
+#endif
             if (read == 0)
                 return totalRead; // EOF
             totalRead += read;
@@ -71,11 +93,24 @@ internal static class Protocol
 
     /// <summary>Serialize a message to a UTF-8 JSON byte array.</summary>
     public static byte[] Serialize<T>(T message) =>
+#if NET8_0_OR_GREATER
         JsonSerializer.SerializeToUtf8Bytes(message, ProtocolJsonContext.Default.Options);
+#else
+        JsonSerializer.SerializeToUtf8Bytes(message, s_serializerOptions);
+#endif
 
     /// <summary>Deserialize a UTF-8 JSON byte array to a JsonDocument for flexible parsing.</summary>
     public static JsonDocument Deserialize(byte[] data) =>
         JsonDocument.Parse(data);
+
+#if !NET8_0_OR_GREATER
+    private static readonly JsonSerializerOptions s_serializerOptions = new JsonSerializerOptions
+    {
+        // JsonPropertyName attributes on each property handle snake_case naming.
+        // SnakeCaseLower naming policy is .NET 8+ only; the explicit attributes work everywhere.
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    };
+#endif
 }
 
 // --- Request/response message types ---
@@ -86,7 +121,7 @@ internal sealed class InitRequest
     public string Type => "init";
 
     [JsonPropertyName("resource_path")]
-    public required string ResourcePath { get; init; }
+    public string ResourcePath { get; init; } = "";
 
     [JsonPropertyName("font_paths")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -102,10 +137,10 @@ internal sealed class ConvertRequest
     public int Id { get; init; }
 
     [JsonPropertyName("input")]
-    public required string Input { get; init; }
+    public string Input { get; init; } = "";
 
     [JsonPropertyName("output")]
-    public required string Output { get; init; }
+    public string Output { get; init; } = "";
 
     [JsonPropertyName("format")]
     public int Format { get; init; }
@@ -179,6 +214,7 @@ internal sealed class QuitRequest
     public string Type => "quit";
 }
 
+#if NET8_0_OR_GREATER
 /// <summary>
 /// Source-generated JSON serializer context for AOT/trimming compatibility.
 /// </summary>
@@ -193,3 +229,4 @@ internal sealed class QuitRequest
 internal partial class ProtocolJsonContext : JsonSerializerContext
 {
 }
+#endif

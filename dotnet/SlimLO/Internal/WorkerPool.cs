@@ -1,3 +1,8 @@
+using System;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+
 namespace SlimLO.Internal;
 
 /// <summary>
@@ -65,7 +70,7 @@ internal sealed class WorkerPool : IAsyncDisposable
         ConvertRequest request,
         CancellationToken ct)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ThrowHelpers.ThrowIfDisposed(_disposed, this);
 
         // Wait for a worker slot
         await _gate.WaitAsync(ct).ConfigureAwait(false);
@@ -78,7 +83,7 @@ internal sealed class WorkerPool : IAsyncDisposable
             await EnsureWorkerAsync(index, ct).ConfigureAwait(false);
 
             var worker = _workers[index];
-            if (worker is null)
+            if (worker == null)
                 return ConversionResult.Fail("Failed to start worker", SlimLOErrorCode.InitFailed, null);
 
             // Execute conversion
@@ -125,7 +130,7 @@ internal sealed class WorkerPool : IAsyncDisposable
         ReadOnlyMemory<byte> documentData,
         CancellationToken ct)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ThrowHelpers.ThrowIfDisposed(_disposed, this);
 
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
@@ -135,7 +140,7 @@ internal sealed class WorkerPool : IAsyncDisposable
             await EnsureWorkerAsync(index, ct).ConfigureAwait(false);
 
             var worker = _workers[index];
-            if (worker is null)
+            if (worker == null)
                 return ConversionResult<byte[]>.Fail("Failed to start worker", SlimLOErrorCode.InitFailed, null);
 
             var result = await worker.ConvertBufferAsync(request, documentData, _timeout, ct).ConfigureAwait(false);
@@ -172,18 +177,20 @@ internal sealed class WorkerPool : IAsyncDisposable
 
     private async Task EnsureWorkerAsync(int index, CancellationToken ct)
     {
-        if (_workers[index] is { IsAlive: true })
+        var w = _workers[index];
+        if (w != null && w.IsAlive)
             return;
 
         await _workerLocks[index].WaitAsync(ct).ConfigureAwait(false);
         try
         {
             // Double-check after acquiring lock
-            if (_workers[index] is { IsAlive: true })
+            w = _workers[index];
+            if (w != null && w.IsAlive)
                 return;
 
             // Dispose old worker if exists
-            if (_workers[index] is not null)
+            if (_workers[index] != null)
             {
                 await _workers[index]!.DisposeAsync().ConfigureAwait(false);
                 _workers[index] = null;
@@ -206,7 +213,7 @@ internal sealed class WorkerPool : IAsyncDisposable
         await _workerLocks[index].WaitAsync().ConfigureAwait(false);
         try
         {
-            if (_workers[index] is not null)
+            if (_workers[index] != null)
             {
                 await _workers[index]!.DisposeAsync().ConfigureAwait(false);
                 _workers[index] = null;
@@ -227,7 +234,7 @@ internal sealed class WorkerPool : IAsyncDisposable
         var tasks = new List<ValueTask>();
         for (int i = 0; i < _maxWorkers; i++)
         {
-            if (_workers[i] is not null)
+            if (_workers[i] != null)
                 tasks.Add(_workers[i]!.DisposeAsync());
         }
 
