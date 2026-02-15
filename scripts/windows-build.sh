@@ -183,29 +183,22 @@ echo "    Python: $WIN_PYTHON"
 echo ""
 
 # -----------------------------------------------------------
-# NASM (x86/x64 only — not needed on ARM64)
+# NASM (always needed on Windows — even ARM64 cross-compile
+# requires it for the x64 cross-toolset OpenSSL build)
 # -----------------------------------------------------------
-case "$TARGET_ARCH" in
-    x86_64|i686)
-        echo ">>> Finding NASM (x86 SIMD)..."
-        NASM_BIN="${NASM:-}"
-        if [ -z "$NASM_BIN" ]; then
-            NASM_BIN="$(command -v nasm 2>/dev/null || command -v nasm.exe 2>/dev/null || true)"
-        fi
-        if [ -z "$NASM_BIN" ]; then
-            echo "ERROR: nasm not found. Install it: pacman -S mingw-w64-x86_64-nasm"
-            exit 1
-        fi
-        export NASM="$NASM_BIN"
-        echo "    NASM: $NASM_BIN"
-        "$NASM_BIN" -v 2>/dev/null || true
-        echo ""
-        ;;
-    aarch64|arm64)
-        echo ">>> ARM64 detected — NASM not required (x86 SIMD only)"
-        echo ""
-        ;;
-esac
+echo ">>> Finding NASM..."
+NASM_BIN="${NASM:-}"
+if [ -z "$NASM_BIN" ]; then
+    NASM_BIN="$(command -v nasm 2>/dev/null || command -v nasm.exe 2>/dev/null || true)"
+fi
+if [ -z "$NASM_BIN" ]; then
+    echo "ERROR: nasm not found. Install it: pacman -S mingw-w64-x86_64-nasm"
+    exit 1
+fi
+export NASM="$NASM_BIN"
+echo "    NASM: $NASM_BIN"
+"$NASM_BIN" -v 2>/dev/null || true
+echo ""
 
 # -----------------------------------------------------------
 # CMake (for SlimLO C API build — Step 7)

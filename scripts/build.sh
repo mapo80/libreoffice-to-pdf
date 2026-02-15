@@ -223,31 +223,19 @@ if [ -n "$PYTHON_BUILD_BIN" ]; then
     export PYTHON="${PYTHON:-$PYTHON_BUILD_BIN}"
 fi
 if [ "$PLATFORM" = "windows" ]; then
-    # Use TARGET_ARCH from environment (set by windows-build.sh) if available,
-    # otherwise fall back to uname -m (which always reports x86_64 under MSYS2).
-    WIN_ARCH="${TARGET_ARCH:-$(uname -m 2>/dev/null || echo unknown)}"
-    case "$WIN_ARCH" in
-        x86_64|i686)
-            # NASM required for x86/x64 SIMD (libjpeg-turbo assembly)
-            NASM_BIN="${NASM:-}"
-            if [ -z "$NASM_BIN" ]; then
-                NASM_BIN="$(command -v nasm 2>/dev/null || command -v nasm.exe 2>/dev/null || true)"
-            fi
-            if [ -z "$NASM_BIN" ]; then
-                echo "ERROR: nasm not found. Install it and ensure it is available in PATH."
-                exit 1
-            fi
-            export NASM="$NASM_BIN"
-            echo "    Using NASM=$NASM"
-            "$NASM" -v || true
-            ;;
-        aarch64|arm64)
-            echo "    ARM64 detected — NASM not required"
-            ;;
-        *)
-            echo "    Unknown architecture $WIN_ARCH — skipping NASM check"
-            ;;
-    esac
+    # NASM is always required on Windows — even ARM64 cross-compile needs it
+    # for the x64 cross-toolset (OpenSSL x64 build in workdir_for_build).
+    NASM_BIN="${NASM:-}"
+    if [ -z "$NASM_BIN" ]; then
+        NASM_BIN="$(command -v nasm 2>/dev/null || command -v nasm.exe 2>/dev/null || true)"
+    fi
+    if [ -z "$NASM_BIN" ]; then
+        echo "ERROR: nasm not found. Install it and ensure it is available in PATH."
+        exit 1
+    fi
+    export NASM="$NASM_BIN"
+    echo "    Using NASM=$NASM"
+    "$NASM" -v || true
 fi
 if [ "$PLATFORM" = "windows" ]; then
     # Auto-detect VS version if not explicitly set

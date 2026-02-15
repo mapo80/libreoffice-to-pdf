@@ -32,18 +32,10 @@ echo ">>> Step 2: Installing MinGW64 packages..."
 # On ARM64 Windows, mingw-w64-x86_64 packages run under x86 emulation.
 pacman -S --noconfirm --needed mingw-w64-x86_64-pkgconf mingw-w64-x86_64-ninja
 
-case "$HOST_ARCH" in
-    x86_64|i686)
-        echo "    x86/x64 host — installing NASM"
-        pacman -S --noconfirm --needed mingw-w64-x86_64-nasm
-        ;;
-    aarch64|arm64)
-        echo "    ARM64 host — NASM not required (x86 SIMD only)"
-        ;;
-    *)
-        echo "    Unknown architecture $HOST_ARCH — skipping NASM"
-        ;;
-esac
+# NASM is always required on Windows — even ARM64 cross-compile needs it
+# for the x64 cross-toolset (OpenSSL x64 build in workdir_for_build).
+echo "    Installing NASM (required for OpenSSL build)"
+pacman -S --noconfirm --needed mingw-w64-x86_64-nasm
 echo ""
 
 # -----------------------------------------------------------
