@@ -304,8 +304,9 @@ fi # end SKIP_CONFIGURE
 # Step 4.6: Detect architecture change and clean stale builds
 # -----------------------------------------------------------
 # When switching architectures (e.g. x64 → ARM64) on the same workdir,
-# ExternalProject build markers from the previous arch are stale.
-# Detect the change and clean them so external libs rebuild for the new arch.
+# ALL compiled artifacts (.obj, .lib, .dll) are architecture-specific.
+# Mixing x64 objects with an ARM64 compiler causes C1905/LNK1257 errors.
+# Detect the change and wipe the entire workdir to force a clean rebuild.
 if [ -f "$LO_SRC_DIR/config_host.mk" ]; then
     CURRENT_CPUNAME="$(awk -F= '/^export CPUNAME=/{print $2; exit}' "$LO_SRC_DIR/config_host.mk" || true)"
     ARCH_MARKER="$LO_SRC_DIR/workdir/.slimlo_arch"
@@ -314,14 +315,9 @@ if [ -f "$LO_SRC_DIR/config_host.mk" ]; then
 
     if [ -n "$PREV_CPUNAME" ] && [ "$PREV_CPUNAME" != "$CURRENT_CPUNAME" ]; then
         echo ">>> Architecture changed: $PREV_CPUNAME → $CURRENT_CPUNAME"
-        echo "    Cleaning stale ExternalProject build markers..."
-        # Remove build state markers so externals rebuild for the new architecture
-        rm -rf "$LO_SRC_DIR/workdir/ExternalProject" 2>/dev/null || true
-        # Remove pre-built binaries from unpacked tarballs (architecture-specific)
-        for ext_builds in "$LO_SRC_DIR"/workdir/UnpackedTarball/*/builds; do
-            [ -d "$ext_builds" ] && rm -rf "$ext_builds"
-        done
-        echo "    Done — external projects will rebuild for $CURRENT_CPUNAME"
+        echo "    Removing entire workdir (all objects are arch-specific)..."
+        rm -rf "$LO_SRC_DIR/workdir"
+        echo "    Done — full rebuild will run for $CURRENT_CPUNAME"
     fi
 
     mkdir -p "$LO_SRC_DIR/workdir"
