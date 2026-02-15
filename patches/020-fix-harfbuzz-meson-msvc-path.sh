@@ -86,6 +86,7 @@ cat > "$TARGET.sed" <<'EOF'
 s|^ar = '$(AR)'$|ar = '$(cross_ar)'|
 s|^strip = '$(STRIP)'$|strip = '$(cross_strip)'|
 s|^\([[:space:]]*\)\$(MESON) setup builddir \\$|\1env -u CL -u _CL_ -u cl -u _cl_ -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS -u cflags -u cxxflags -u cppflags -u ldflags -u INCLUDE -u include CC="$(cross_cc_native)" CXX="$(cross_cxx_native)" PKG_CONFIG="$(cross_pkg_config)" $(MESON) setup builddir \\|
+s|^\([[:space:]]*\)-Dgraphite2=enabled \\$|\1-Dgraphite2=$(if $(filter WNT,$(OS)),disabled,enabled) \\|
 EOF
 sed -f "$TARGET.sed" "$TARGET" > "$TARGET.tmp" && mv "$TARGET.tmp" "$TARGET"
 rm -f "$TARGET.sed"
