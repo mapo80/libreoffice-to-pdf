@@ -46,6 +46,10 @@ BEGIN { replaced=0; skip=0; }
         print "hb_icu_dir := $(if $(filter WNT,$(OS)),$(shell cygpath -m \"$(gb_UnpackedTarball_workdir)/icu\"),$(gb_UnpackedTarball_workdir)/icu)"
         print "hb_pkg_sep := $(if $(filter WNT,$(OS)),;,:)"
         print "hb_pkg_config_path := $(if $(filter WNT,$(OS)),$(hb_graphite_dir)$(hb_pkg_sep)$(hb_icu_dir),${PKG_CONFIG_PATH}$(LIBO_PATH_SEPARATOR)$(gb_UnpackedTarball_workdir)/graphite$(if $(SYSTEM_ICU),,$(LIBO_PATH_SEPARATOR)$(gb_UnpackedTarball_workdir)/icu))"
+        print "# Reconstruct MSVC INCLUDE from SOLARINC (-I flags -> ;-separated paths)"
+        print "# Meson needs INCLUDE for cl.exe to find stdio.h etc. We must unset the gbuild"
+        print "# INCLUDE (which has -I flags) but provide the real SDK/MSVC include paths."
+        print "hb_msvc_include := $(subst -I,,$(subst -I ,;,$(strip $(SOLARINC))))"
         replaced=1
         skip=1
         next
@@ -110,7 +114,7 @@ fi
 cat > "$TARGET.sed" <<'EOF'
 s|^ar = '$(AR)'$|ar = '$(cross_ar)'|
 s|^strip = '$(STRIP)'$|strip = '$(cross_strip)'|
-s|^\([[:space:]]*\)\$(MESON) setup builddir \\$|\1env -u CL -u _CL_ -u cl -u _cl_ -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS -u cflags -u cxxflags -u cppflags -u ldflags -u INCLUDE -u include CC="$(cross_cc_native)" CXX="$(cross_cxx_native)" PKG_CONFIG="$(cross_pkg_config)" $(MESON) setup builddir \\|
+s|^\([[:space:]]*\)\$(MESON) setup builddir \\$|\1env -u CL -u _CL_ -u cl -u _cl_ -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS -u cflags -u cxxflags -u cppflags -u ldflags -u include INCLUDE="$(hb_msvc_include)" CC="$(cross_cc_native)" CXX="$(cross_cxx_native)" PKG_CONFIG="$(cross_pkg_config)" $(MESON) setup builddir \\|
 s|^\([[:space:]]*\)-Dgraphite2=enabled \\$|\1-Dgraphite2=$(if $(filter WNT,$(OS)),disabled,enabled) \\|
 EOF
 sed -f "$TARGET.sed" "$TARGET" > "$TARGET.tmp" && mv "$TARGET.tmp" "$TARGET"
