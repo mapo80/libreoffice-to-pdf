@@ -64,6 +64,11 @@ MODULES_TO_STRIP=(
     "ridljar"
     "net_ure"
 
+    # Scripting / macro / signature stack (DOCX->PDF does not require these)
+    "basic"
+    "scripting"
+    "xmlsecurity"
+
     # Platform-specific (leaf)
     "embedserv"
     # Windows accessibility bridge (ATL/COM heavy, not needed for headless DOCX->PDF)

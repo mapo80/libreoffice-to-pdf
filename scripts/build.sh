@@ -9,8 +9,22 @@ LO_VERSION="$(cat "$PROJECT_DIR/LO_VERSION" | tr -d '[:space:]')"
 LO_SRC_DIR="${LO_SRC_DIR:-$PROJECT_DIR/lo-src}"
 OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_DIR/output}"
 NPROC="${NPROC:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
-DOCX_AGGRESSIVE="${DOCX_AGGRESSIVE:-0}"
+DOCX_AGGRESSIVE="${DOCX_AGGRESSIVE:-1}"
 SKIP_CONFIGURE="${SKIP_CONFIGURE:-0}"
+SLIMLO_DISTRO_CONFIG_PATH="${SLIMLO_DISTRO_CONFIG_PATH:-}"
+
+case "$DOCX_AGGRESSIVE" in
+    1) ;;
+    0)
+        echo "ERROR: DOCX_AGGRESSIVE=0 is no longer supported."
+        echo "       SlimLO now uses an always-aggressive DOCX-only runtime profile."
+        exit 1
+        ;;
+    *)
+        echo "ERROR: DOCX_AGGRESSIVE must be 1 (got '$DOCX_AGGRESSIVE')."
+        exit 1
+        ;;
+esac
 
 # Detect platform
 case "$(uname -s)" in
@@ -111,6 +125,7 @@ echo " Parallelism:  $NPROC"
 if [ "$SKIP_CONFIGURE" = "1" ]; then
 echo " Mode:         build-only (skip configure)"
 fi
+echo " Profile:      docx-aggressive (always)"
 echo "============================================"
 echo ""
 
@@ -171,13 +186,23 @@ echo ""
 # Step 3: Copy distro config
 # -----------------------------------------------------------
 echo ">>> Step 3: Installing SlimLO distro config..."
-case "$PLATFORM" in
-    macos) DISTRO_CONF="SlimLO-macOS.conf" ;;
-    windows) DISTRO_CONF="SlimLO-windows.conf" ;;
-    *)     DISTRO_CONF="SlimLO.conf" ;;
-esac
-cp "$PROJECT_DIR/distro-configs/$DISTRO_CONF" "$LO_SRC_DIR/distro-configs/$DISTRO_CONF"
-echo "    Copied $DISTRO_CONF to $LO_SRC_DIR/distro-configs/"
+if [ -n "$SLIMLO_DISTRO_CONFIG_PATH" ]; then
+    if [ ! -f "$SLIMLO_DISTRO_CONFIG_PATH" ]; then
+        echo "ERROR: SLIMLO_DISTRO_CONFIG_PATH not found: $SLIMLO_DISTRO_CONFIG_PATH"
+        exit 1
+    fi
+    DISTRO_CONF="$(basename "$SLIMLO_DISTRO_CONFIG_PATH")"
+    cp "$SLIMLO_DISTRO_CONFIG_PATH" "$LO_SRC_DIR/distro-configs/$DISTRO_CONF"
+    echo "    Copied override distro config: $SLIMLO_DISTRO_CONFIG_PATH"
+else
+    case "$PLATFORM" in
+        macos) DISTRO_CONF="SlimLO-macOS.conf" ;;
+        windows) DISTRO_CONF="SlimLO-windows.conf" ;;
+        *)     DISTRO_CONF="SlimLO.conf" ;;
+    esac
+    cp "$PROJECT_DIR/distro-configs/$DISTRO_CONF" "$LO_SRC_DIR/distro-configs/$DISTRO_CONF"
+    echo "    Copied $DISTRO_CONF to $LO_SRC_DIR/distro-configs/"
+fi
 echo ""
 
 # -----------------------------------------------------------
@@ -359,6 +384,27 @@ if [ -f "$PROJECT_DIR/slimlo-api/CMakeLists.txt" ]; then
     echo "    SlimLO C API built and copied to $OUTPUT_DIR/program/"
 else
     echo "    WARNING: slimlo-api/CMakeLists.txt not found, skipping C API build"
+fi
+echo ""
+
+# -----------------------------------------------------------
+# Step 8: Build metadata + size report
+# -----------------------------------------------------------
+echo ">>> Step 8: Writing build metadata and size report..."
+if [ -x "$SCRIPT_DIR/write-build-metadata.sh" ]; then
+    "$SCRIPT_DIR/write-build-metadata.sh" "$OUTPUT_DIR"
+else
+    echo "    WARNING: write-build-metadata.sh not found/executable"
+fi
+if [ -x "$SCRIPT_DIR/measure-artifact.sh" ]; then
+    "$SCRIPT_DIR/measure-artifact.sh" "$OUTPUT_DIR"
+else
+    echo "    WARNING: measure-artifact.sh not found/executable"
+fi
+if [ -x "$SCRIPT_DIR/check-deps-allowlist.sh" ]; then
+    "$SCRIPT_DIR/check-deps-allowlist.sh" "$OUTPUT_DIR"
+else
+    echo "    WARNING: check-deps-allowlist.sh not found/executable"
 fi
 echo ""
 

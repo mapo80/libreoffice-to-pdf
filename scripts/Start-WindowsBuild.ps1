@@ -5,8 +5,7 @@ param(
     [switch]$SetupOnly,
     [switch]$BuildOnly,
     [switch]$SkipConfigure,
-    [int]$Parallelism = 0,
-    [switch]$Aggressive
+    [int]$Parallelism = 0
 )
 
 Write-Host "============================================" -ForegroundColor Cyan
@@ -63,10 +62,6 @@ if (-not $SetupOnly) {
 
     if ($Parallelism -gt 0) {
         $buildCmd = "NPROC=$Parallelism $buildCmd"
-    }
-
-    if ($Aggressive) {
-        $buildCmd = "DOCX_AGGRESSIVE=1 $buildCmd"
     }
 
     if ($SkipConfigure) {

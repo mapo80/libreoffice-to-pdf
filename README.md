@@ -13,8 +13,7 @@ SlimLO is **not a fork**. It applies idempotent patch scripts to vanilla LibreOf
 | | |
 |---|---|
 | **Platforms** | Linux x64/arm64 · macOS arm64/x64 · Windows x64 |
-| **Artifact size (compat)** | ~144 MB (linux-x64) · ~138 MB (linux-arm64) · ~146 MB (macOS local) |
-| **Artifact size (docx-aggressive)** | ~134 MB (macOS local, `2026-02-14`) |
+| **Artifact size (always-aggressive)** | ~134 MB (macOS local, `2026-02-15`) |
 | **Merged lib** | ~65 MB `.dylib` (macOS local, stripped) |
 | **LO version** | `libreoffice-25.8.5.1` |
 | **.NET tests** | 195 passing (net8.0 + net6.0) |
@@ -61,7 +60,7 @@ SlimLO strips LibreOffice down to its Writer engine + UNO + DOCX/PDF conversion 
 **Key design decisions:**
 
 - **Patch-based, not a fork** — 22 patch scripts (including one post-autogen patch) modify vanilla LO source. No `git .patch` files — scripts are resilient to upstream line-number changes and easy to maintain across LO upgrades.
-- **Single merged library** — `--enable-mergelibs` + LTO combines hundreds of LO modules into one `libmergedlo`. Dead code elimination + aggressive stripping reduces 1.5 GB to ~146 MB (`compat`) or ~134 MB (`docx-aggressive`, macOS local).
+- **Single merged library** — `--enable-mergelibs` + LTO combines hundreds of LO modules into one `libmergedlo`. Dead code elimination + aggressive stripping reduces 1.5 GB to ~134 MB extracted runtime (macOS local, always-aggressive profile).
 - **Process isolation** (.NET / Java) — Each conversion runs in a separate native `slimlo_worker` process. LibreOffice crash on a malformed document kills only the worker, never the host application.
 - **Same worker, multiple SDKs** — Both .NET and Java SDKs spawn the same `slimlo_worker` binary and communicate via the same length-prefixed JSON IPC protocol over stdin/stdout pipes.
 
@@ -744,16 +743,16 @@ docker run --rm -v $(pwd)/output:/output slimlo-build
 | `LO_SRC_DIR` | `./lo-src` | LO source directory (~2.5 GB) |
 | `OUTPUT_DIR` | `./output` | Artifact output directory |
 | `NPROC` | auto-detected | Build parallelism (`-jN`) |
-| `DOCX_AGGRESSIVE` | `0` | `0=compat`, `1=docx-aggressive` runtime pruning profile |
+| `DOCX_AGGRESSIVE` | `1` | Always-aggressive profile (`1` only; `0` is rejected) |
 
-### Build profiles
+### Build profile
 
 ```bash
-# Conservative profile (default)
-DOCX_AGGRESSIVE=0 ./scripts/build.sh
-
-# Aggressive DOCX-only pruning profile
+# Always-aggressive DOCX-only profile
 DOCX_AGGRESSIVE=1 ./scripts/build.sh
+
+# Equivalent (default)
+./scripts/build.sh
 ```
 
 ### Probe aggressive candidates
@@ -765,6 +764,22 @@ DOCX_AGGRESSIVE=1 ./scripts/build.sh
 # Optional extra gate (enable .NET stream/buffer checks)
 PRUNE_DOTNET_GATE=1 ./scripts/prune-probe.sh ./output
 ```
+
+### Build metadata and size reports
+
+Each build writes reproducibility and size artifacts into the output directory:
+
+- `output/build-metadata.json` — source/config/patch hashes + toolchain versions
+- `output/size-report.json` — extracted size, top files, dependency scan
+- `output/size-report.txt` — human-readable summary
+
+Related scripts:
+
+- `scripts/write-build-metadata.sh`
+- `scripts/measure-artifact.sh`
+- `scripts/check-deps-allowlist.sh`
+- `scripts/run-gate.sh`
+- `scripts/macos-ultra-matrix.sh`
 
 **Linux prerequisites:**
 
@@ -807,7 +822,7 @@ Local Windows builds use a set of scripts that handle MSVC toolchain discovery, 
 
 | File | Purpose | Usage |
 |------|---------|-------|
-| `scripts/Start-WindowsBuild.ps1` | PowerShell launcher. Loads `vcvarsall.bat x64`, then invokes MSYS2 with the build. | `.\scripts\Start-WindowsBuild.ps1 [-BuildOnly] [-SkipConfigure] [-Parallelism 8] [-Aggressive]` |
+| `scripts/Start-WindowsBuild.ps1` | PowerShell launcher. Loads `vcvarsall.bat x64`, then invokes MSYS2 with the build. | `.\scripts\Start-WindowsBuild.ps1 [-BuildOnly] [-SkipConfigure] [-Parallelism 8]` |
 | `scripts/run-windows-build.bat` | Batch launcher. Same as above but for `cmd.exe`. | `.\scripts\run-windows-build.bat` |
 | `scripts/setup-prerequisites.ps1` | Checks and installs prerequisites (VS, Python, MSYS2) via `winget`. | `.\scripts\setup-prerequisites.ps1` |
 | `scripts/setup-windows-msys2.sh` | Installs MSYS2 packages, creates `pkgconf` and `wslpath` shims. Run once inside MSYS2 MSYS shell. | `./scripts/setup-windows-msys2.sh` |
@@ -826,18 +841,21 @@ Local Windows builds use a set of scripts that handle MSVC toolchain discovery, 
 
 ```
 output/
-├── program/           # ~138 MB compat / ~132 MB docx-aggressive (macOS local)
+├── program/           # ~132 MB (always-aggressive, macOS local)
 │   ├── libmergedlo.{so,dylib,dll}  # ~65 MB core engine (macOS local, LTO)
 │   ├── libslimlo.{so,dylib,dll}    # C API wrapper
 │   ├── slimlo_worker               # IPC worker process
 │   ├── lib*.{so,dylib}             # UNO, ICU, externals, stubs
 │   ├── sofficerc                   # Bootstrap RC chain
 │   └── types/offapi.rdb            # UNO type registry
-├── share/             # ~7.4 MB compat / ~2.5 MB docx-aggressive (macOS local)
+├── share/             # ~2.5 MB (always-aggressive, macOS local)
 │   ├── registry/*.xcd
 │   ├── config/soffice.cfg/
 │   └── filter/
 ├── presets/            # Empty (required by LOKit)
+├── build-metadata.json # Deterministic source/config/toolchain metadata
+├── size-report.json    # Extracted size + dependency scan
+├── size-report.txt     # Human summary
 └── include/
     └── slimlo.h
 ```
@@ -902,10 +920,11 @@ makefiles             →  $(if $(ENABLE_SLIMLO),,target)   # exclude targets
 
 | Config | Platform | Key differences |
 |--------|----------|----------------|
-| `SlimLO.conf` | Linux, Windows | `--disable-gui` (headless SVP backend), disables GTK/Qt/dbus/gio/gstreamer |
+| `SlimLO.conf` | Linux | `--disable-gui` (headless SVP backend), disables GTK/Qt/dbus/gio/gstreamer |
 | `SlimLO-macOS.conf` | macOS | No `--disable-gui` (Quartz VCL), `--enable-bogus-pkg-config` for Homebrew |
+| `SlimLO-windows.conf` | Windows x64 | MSVC-oriented flags, OpenSSL TLS path, no GTK/Qt integrations |
 
-Both share: `--enable-slimlo`, `--enable-mergelibs`, `--enable-lto`, `--with-java=no`, `--disable-python`, `--enable-mpl-subset`.
+All three share the DOCX-only hard-minimal direction: `--enable-slimlo`, `--enable-mergelibs`, `--enable-lto`, `--with-java=no`, `--disable-python`, `--disable-scripting`, `--disable-curl`, `--disable-nss`, `--with-tls=openssl`.
 
 ### macOS .app bundle layout
 
@@ -938,20 +957,26 @@ Full LibreOffice `instdir/` is **~1.5 GB**. SlimLO reduces it in three stages:
 
 22 patch scripts conditionally exclude modules and fix platform-specific build edges (Linux/macOS/Windows). Disabled paths include DB tooling, Java/Python, desktop integration, and non-essential UI/runtime components. Everything merges into `libmergedlo` via `--enable-mergelibs`.
 
-### Stage 2: Artifact pruning (`compat`) (~300 MB -> ~146 MB)
+### Stage 2: Always-aggressive artifact pruning (~300 MB -> ~134 MB)
 
-`extract-artifacts.sh` baseline profile (`DOCX_AGGRESSIVE=0`) removes runtime files not needed for DOCX-to-PDF:
+`extract-artifacts.sh` runs in always-aggressive DOCX-only mode (`DOCX_AGGRESSIVE=1`) and removes runtime files not needed for DOCX-to-PDF:
 
 - Non-Writer modules and import backends
 - UI-only libraries/config packs
 - Unused XCD/runtime entries and helper executables
 
-### Stage 3: DOCX aggressive runtime pruning (`docx-aggressive`) (~146 MB -> ~134 MB macOS local)
+### Stage 3: Probe-driven dependency floor and gate enforcement
 
-- Enabled with `DOCX_AGGRESSIVE=1`
-- Candidate set validated by `scripts/prune-probe.sh`
-- Generated manifest: `artifacts/prune-manifest-docx-aggressive.txt`
-- Measured on macOS local (`2026-02-14`): **-11.4 MB** extracted runtime (`~146 MB -> ~134 MB`)
+- Candidate set validated by `scripts/prune-probe.sh` + `scripts/run-gate.sh`
+- Prune manifest: `artifacts/prune-manifest-docx-aggressive.txt`
+- Dependency allowlists:
+  - `artifacts/deps-allowlist-macos.txt`
+  - `artifacts/deps-allowlist-linux.txt`
+  - `artifacts/deps-allowlist-windows.txt`
+- Size/dependency reports generated by:
+  - `scripts/write-build-metadata.sh`
+  - `scripts/measure-artifact.sh`
+  - `scripts/check-deps-allowlist.sh`
 
 ### What cannot be removed
 
@@ -1093,6 +1118,7 @@ apk add --no-cache \
 ## CI pipelines
 
 All pipelines trigger on `pull_request` to `main` and `workflow_dispatch`.
+Each pipeline always uploads build reports (`build-metadata.json`, `size-report.json`, `size-report.txt`) in a dedicated artifact, in addition to the runtime artifact.
 
 | Workflow | Runner | Build method | Timeout |
 |----------|--------|-------------|---------|
