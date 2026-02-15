@@ -90,8 +90,8 @@ END {
 ' "$TARGET" > "$TARGET.tmp" && mv "$TARGET.tmp" "$TARGET"
 fi
 
-# Also copy icu-uc-uninstalled.pc → icu-uc.pc so pkgconf can find it
-# (same issue as graphite2: pkgconf on Windows doesn't resolve -uninstalled suffix)
+# Also copy icu-uc-uninstalled.pc -> icu-uc.pc so pkgconf can find it
+# (same issue as graphite2: pkgconf on Windows does not resolve -uninstalled suffix)
 if ! grep -Fq 'icu-uc-uninstalled.pc' "$TARGET"; then
     awk '
 BEGIN { inserted=0; }
@@ -113,11 +113,34 @@ fi
 cat > "$TARGET.sed" <<'EOF'
 s|^ar = '$(AR)'$|ar = '$(cross_ar)'|
 s|^strip = '$(STRIP)'$|strip = '$(cross_strip)'|
-s|^\([[:space:]]*\)\$(MESON) setup builddir \\$|\1env -u CL -u _CL_ -u cl -u _cl_ -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS -u cflags -u cxxflags -u cppflags -u ldflags -u include INCLUDE="$(hb_msvc_include)" CC="$(cross_cc_native)" CXX="$(cross_cxx_native)" PKG_CONFIG="$(cross_pkg_config)" $(MESON) setup builddir \\|
 s|^\([[:space:]]*\)-Dgraphite2=enabled \\$|\1-Dgraphite2=$(if $(filter WNT,$(OS)),disabled,enabled) \\|
 EOF
 sed -f "$TARGET.sed" "$TARGET" > "$TARGET.tmp" && mv "$TARGET.tmp" "$TARGET"
 rm -f "$TARGET.sed"
+
+# Replace the PKG_CONFIG_PATH / PYTHONWARNINGS / $(MESON) setup block.
+# export INCLUDE is set as a shell command (persists for meson setup AND meson compile).
+# PKG_CONFIG_PATH and PYTHONWARNINGS remain as inline env vars for the env+meson command.
+if ! grep -Fq 'export INCLUDE="$(hb_msvc_include)"' "$TARGET"; then
+    awk '
+{
+    if ($0 ~ /^[[:space:]]*PKG_CONFIG_PATH=.*\\$/) {
+        # Insert export INCLUDE before the PKG_CONFIG_PATH line
+        print "\t\texport INCLUDE=\"$(hb_msvc_include)\" && \\"
+        # Keep PKG_CONFIG_PATH line as-is
+        print $0
+        # Read PYTHONWARNINGS line
+        getline
+        print $0
+        # Read $(MESON) setup line and replace with env-wrapped version
+        getline
+        print "\t\tenv -u CL -u _CL_ -u cl -u _cl_ -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS -u cflags -u cxxflags -u cppflags -u ldflags -u include CC=\"$(cross_cc_native)\" CXX=\"$(cross_cxx_native)\" PKG_CONFIG=\"$(cross_pkg_config)\" $(MESON) setup builddir \\"
+        next
+    }
+    print $0
+}
+' "$TARGET" > "$TARGET.tmp" && mv "$TARGET.tmp" "$TARGET"
+fi
 
 # On Windows, Meson invokes pkgconf.exe (MinGW native) which requires ';' as
 # PKG_CONFIG_PATH separator. But LIBO_PATH_SEPARATOR is ':' (POSIX, from MSYS2
