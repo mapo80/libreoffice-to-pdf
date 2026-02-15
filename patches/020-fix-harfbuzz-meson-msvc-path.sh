@@ -82,6 +82,26 @@ END {
 ' "$TARGET" > "$TARGET.tmp" && mv "$TARGET.tmp" "$TARGET"
 fi
 
+# Also copy icu-uc-uninstalled.pc → icu-uc.pc so pkgconf can find it
+# (same issue as graphite2: pkgconf on Windows doesn't resolve -uninstalled suffix)
+if ! grep -Fq 'icu-uc-uninstalled.pc' "$TARGET"; then
+    awk '
+BEGIN { inserted=0; }
+{
+    if (!inserted && $0 ~ /^[[:space:]]*PKG_CONFIG_PATH="/) {
+        print "\t\tif [ -f \"$(gb_UnpackedTarball_workdir)/icu/icu-uc-uninstalled.pc\" ] && [ ! -f \"$(gb_UnpackedTarball_workdir)/icu/icu-uc.pc\" ]; then cp \"$(gb_UnpackedTarball_workdir)/icu/icu-uc-uninstalled.pc\" \"$(gb_UnpackedTarball_workdir)/icu/icu-uc.pc\"; fi && \\"
+        inserted=1
+    }
+    print $0
+}
+END {
+    if (!inserted) {
+        exit 2
+    }
+}
+' "$TARGET" > "$TARGET.tmp" && mv "$TARGET.tmp" "$TARGET"
+fi
+
 cat > "$TARGET.sed" <<'EOF'
 s|^ar = '$(AR)'$|ar = '$(cross_ar)'|
 s|^strip = '$(STRIP)'$|strip = '$(cross_strip)'|
