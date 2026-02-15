@@ -41,6 +41,11 @@ BEGIN { replaced=0; skip=0; }
         print "cross_pkg_config := $(if $(wildcard /mingw64/bin/pkgconf.exe),$(call cross_path_to_native,/mingw64/bin/pkgconf.exe),$(firstword $(PKG_CONFIG)))"
         print "cross_ar := $(call cross_path_to_native,$(AR))"
         print "cross_strip := $(call cross_path_to_native,$(STRIP))"
+        print "# PKG_CONFIG_PATH for harfbuzz meson: use ; separator and Windows paths on WNT"
+        print "hb_graphite_dir := $(if $(filter WNT,$(OS)),$(shell cygpath -m \"$(gb_UnpackedTarball_workdir)/graphite\"),$(gb_UnpackedTarball_workdir)/graphite)"
+        print "hb_icu_dir := $(if $(filter WNT,$(OS)),$(shell cygpath -m \"$(gb_UnpackedTarball_workdir)/icu\"),$(gb_UnpackedTarball_workdir)/icu)"
+        print "hb_pkg_sep := $(if $(filter WNT,$(OS)),;,:)"
+        print "hb_pkg_config_path := $(if $(filter WNT,$(OS)),$(hb_graphite_dir)$(hb_pkg_sep)$(hb_icu_dir),${PKG_CONFIG_PATH}$(LIBO_PATH_SEPARATOR)$(gb_UnpackedTarball_workdir)/graphite$(if $(SYSTEM_ICU),,$(LIBO_PATH_SEPARATOR)$(gb_UnpackedTarball_workdir)/icu))"
         replaced=1
         skip=1
         next
@@ -110,5 +115,13 @@ s|^\([[:space:]]*\)-Dgraphite2=enabled \\$|\1-Dgraphite2=$(if $(filter WNT,$(OS)
 EOF
 sed -f "$TARGET.sed" "$TARGET" > "$TARGET.tmp" && mv "$TARGET.tmp" "$TARGET"
 rm -f "$TARGET.sed"
+
+# On Windows, Meson invokes pkgconf.exe (MinGW native) which requires ';' as
+# PKG_CONFIG_PATH separator. But LIBO_PATH_SEPARATOR is ':' (POSIX, from MSYS2
+# configure), and the inherited ${PKG_CONFIG_PATH} also uses ':' with POSIX paths.
+# The hb_pkg_config_path variable (set in the awk block above) handles this by
+# using ';' separator and cygpath-converted Windows paths on WNT.
+# Here we just need to replace the PKG_CONFIG_PATH= line to use the pre-built variable.
+sed -i 's|PKG_CONFIG_PATH="${PKG_CONFIG_PATH}$(LIBO_PATH_SEPARATOR)$(gb_UnpackedTarball_workdir)/graphite$(if $(SYSTEM_ICU),,$(LIBO_PATH_SEPARATOR)$(gb_UnpackedTarball_workdir)/icu)"|PKG_CONFIG_PATH="$(hb_pkg_config_path)"|' "$TARGET"
 
 echo "    Patch 020 complete"
