@@ -3,7 +3,7 @@ namespace SlimLO;
 /// <summary>
 /// Options for a single PDF conversion operation.
 /// </summary>
-public sealed record ConversionOptions
+public sealed class ConversionOptions
 {
     /// <summary>PDF version for the output. Default: PDF 1.7.</summary>
     public PdfVersion PdfVersion { get; init; } = PdfVersion.Default;

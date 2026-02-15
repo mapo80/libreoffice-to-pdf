@@ -1,6 +1,12 @@
+using System;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace SlimLO.Internal;
 
@@ -29,7 +35,7 @@ internal sealed class WorkerProcess : IAsyncDisposable
     }
 
     public int ConversionCount => _conversionCount;
-    public bool IsAlive => _process is { HasExited: false };
+    public bool IsAlive => _process != null && !_process.HasExited;
     public string? Version => _version;
 
     /// <summary>
@@ -37,7 +43,7 @@ internal sealed class WorkerProcess : IAsyncDisposable
     /// </summary>
     public async Task StartAsync(CancellationToken ct)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ThrowHelpers.ThrowIfDisposed(_disposed, this);
 
         var psi = new ProcessStartInfo
         {
@@ -47,17 +53,16 @@ internal sealed class WorkerProcess : IAsyncDisposable
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             CreateNoWindow = true,
+#if NET6_0_OR_GREATER
             StandardInputEncoding = null, // binary
+#endif
             StandardOutputEncoding = null, // binary
         };
 
         // Ensure the worker can find libslimlo and libmergedlo.
-        // Include both the worker's directory and the resource program/ directory,
-        // since the worker may be in a different location than the native assets
-        // (e.g., during development or when SLIMLO_WORKER_PATH is set).
         var workerDir = Path.GetDirectoryName(_workerPath)!;
         var programDir = Path.Combine(_resourcePath, "program");
-        if (OperatingSystem.IsLinux())
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
         {
             var existing = Environment.GetEnvironmentVariable("LD_LIBRARY_PATH");
             var paths = workerDir == programDir ? workerDir : $"{workerDir}:{programDir}";
@@ -65,7 +70,7 @@ internal sealed class WorkerProcess : IAsyncDisposable
                 ? paths
                 : $"{paths}:{existing}";
         }
-        else if (OperatingSystem.IsMacOS())
+        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
             var existing = Environment.GetEnvironmentVariable("DYLD_LIBRARY_PATH");
             var paths = workerDir == programDir ? workerDir : $"{workerDir}:{programDir}";
@@ -74,30 +79,33 @@ internal sealed class WorkerProcess : IAsyncDisposable
                 : $"{paths}:{existing}";
         }
 
-        // Set environment variables for the worker process.
         // On macOS, the SVP (headless) plugin is not available — only the Quartz
         // backend exists. On Linux/Windows, use SVP for headless operation.
-        if (!OperatingSystem.IsMacOS())
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             psi.Environment["SAL_USE_VCLPLUGIN"] = "svp";
 
         // On macOS, LOKit must use "unipoll" mode to run VCL initialization on the
-        // calling thread. Without this, LOKit spawns a background thread for VCL init,
-        // but the Quartz backend creates NSWindow objects which require the main thread.
-        if (OperatingSystem.IsMacOS())
+        // calling thread.
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             psi.Environment["SAL_LOK_OPTIONS"] = "unipoll";
 
         // Enable font-related logging so stderr capture can detect font warnings
         psi.Environment["SAL_LOG"] = "+WARN.vcl.fonts+INFO.vcl+WARN.vcl";
 
         // Set custom font paths
-        if (_fontDirectories is { Count: > 0 })
+        if (_fontDirectories != null && _fontDirectories.Count > 0)
         {
-            var separator = OperatingSystem.IsWindows() ? ";" : ":";
+            var separator = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ";" : ":";
             psi.Environment["SAL_FONTPATH"] = string.Join(separator, _fontDirectories);
         }
 
         // Create a temp directory for LOKit user profile
-        var profileDir = Path.Combine(Path.GetTempPath(), $"slimlo_profile_{Environment.ProcessId}_{GetHashCode():x}");
+#if NET5_0_OR_GREATER
+        var pid = Environment.ProcessId;
+#else
+        var pid = System.Diagnostics.Process.GetCurrentProcess().Id;
+#endif
+        var profileDir = Path.Combine(Path.GetTempPath(), $"slimlo_profile_{pid}_{GetHashCode():x}");
         Directory.CreateDirectory(profileDir);
         psi.Environment["HOME"] = profileDir;
 
@@ -173,9 +181,9 @@ internal sealed class WorkerProcess : IAsyncDisposable
         TimeSpan timeout,
         CancellationToken ct)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ThrowHelpers.ThrowIfDisposed(_disposed, this);
 
-        if (!_initialized || _process is null or { HasExited: true })
+        if (!_initialized || _process == null || _process.HasExited)
             return ConversionResult.Fail(
                 "Worker process is not running",
                 SlimLOErrorCode.NotInitialized, null);
@@ -268,9 +276,9 @@ internal sealed class WorkerProcess : IAsyncDisposable
         TimeSpan timeout,
         CancellationToken ct)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ThrowHelpers.ThrowIfDisposed(_disposed, this);
 
-        if (!_initialized || _process is null or { HasExited: true })
+        if (!_initialized || _process == null || _process.HasExited)
             return ConversionResult<byte[]>.Fail(
                 "Worker process is not running",
                 SlimLOErrorCode.NotInitialized, null);
@@ -381,8 +389,12 @@ internal sealed class WorkerProcess : IAsyncDisposable
     {
         try
         {
-            if (_process is { HasExited: false })
+            if (_process != null && !_process.HasExited)
+#if NET5_0_OR_GREATER
                 _process.Kill(entireProcessTree: true);
+#else
+                _process.Kill();
+#endif
         }
         catch
         {
@@ -395,7 +407,7 @@ internal sealed class WorkerProcess : IAsyncDisposable
         if (_disposed) return;
         _disposed = true;
 
-        if (_process is not null && !_process.HasExited)
+        if (_process != null && !_process.HasExited)
         {
             try
             {
@@ -406,6 +418,7 @@ internal sealed class WorkerProcess : IAsyncDisposable
                     .ConfigureAwait(false);
 
                 // Wait up to 5 seconds for graceful exit
+#if NET5_0_OR_GREATER
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
                 try
                 {
@@ -415,6 +428,14 @@ internal sealed class WorkerProcess : IAsyncDisposable
                 {
                     KillProcess();
                 }
+#else
+                // Polyfill: synchronous wait with timeout on a thread pool thread
+                var exited = await Task.Run(() => _process.WaitForExit(5000)).ConfigureAwait(false);
+                if (!exited)
+                {
+                    KillProcess();
+                }
+#endif
             }
             catch
             {

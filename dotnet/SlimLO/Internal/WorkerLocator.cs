@@ -1,3 +1,5 @@
+using System;
+using System.IO;
 using System.Runtime.InteropServices;
 
 namespace SlimLO.Internal;
@@ -12,21 +14,21 @@ internal static class WorkerLocator
     /// </summary>
     public static string FindWorkerExecutable()
     {
-        var workerName = OperatingSystem.IsWindows() ? "slimlo_worker.exe" : "slimlo_worker";
+        var workerName = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "slimlo_worker.exe" : "slimlo_worker";
         var assemblyDir = GetAssemblyDirectory();
 
         // Search locations in priority order
-        string[] searchPaths =
-        [
+        string[] searchPaths = new[]
+        {
             // Same directory as assembly (most common for dev/test)
             Path.Combine(assemblyDir, workerName),
             // runtimes/{rid}/native/ (NuGet package layout)
-            Path.Combine(assemblyDir, "runtimes", RuntimeInformation.RuntimeIdentifier, "native", workerName),
+            Path.Combine(assemblyDir, "runtimes", GetRuntimeIdentifier(), "native", workerName),
             // native/ subdirectory
             Path.Combine(assemblyDir, "native", workerName),
             // program/ subdirectory (direct artifact layout)
             Path.Combine(assemblyDir, "program", workerName),
-        ];
+        };
 
         foreach (var path in searchPaths)
         {
@@ -52,8 +54,8 @@ internal static class WorkerLocator
         var assemblyDir = GetAssemblyDirectory();
 
         // Search locations in priority order
-        string[] candidates =
-        [
+        string[] candidates = new[]
+        {
             // Same directory as assembly has program/ subdirectory
             assemblyDir,
             // slimlo-resources/ subdirectory
@@ -63,8 +65,8 @@ internal static class WorkerLocator
             // Parent's slimlo-resources
             Path.Combine(assemblyDir, "..", "slimlo-resources"),
             // NuGet package layout
-            Path.Combine(assemblyDir, "runtimes", RuntimeInformation.RuntimeIdentifier, "native"),
-        ];
+            Path.Combine(assemblyDir, "runtimes", GetRuntimeIdentifier(), "native"),
+        };
 
         foreach (var candidate in candidates)
         {
@@ -82,6 +84,32 @@ internal static class WorkerLocator
         throw new InvalidOperationException(
             "Cannot auto-detect SlimLO resource path. " +
             "Set SLIMLO_RESOURCE_PATH environment variable or pass ResourcePath in PdfConverterOptions.");
+    }
+
+    private static string GetRuntimeIdentifier()
+    {
+#if NET5_0_OR_GREATER
+        return RuntimeInformation.RuntimeIdentifier;
+#else
+        string os;
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            os = "win";
+        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            os = "osx";
+        else
+            os = "linux";
+
+        string arch = RuntimeInformation.ProcessArchitecture switch
+        {
+            Architecture.X64 => "x64",
+            Architecture.Arm64 => "arm64",
+            Architecture.X86 => "x86",
+            Architecture.Arm => "arm",
+            _ => "x64"
+        };
+
+        return $"{os}-{arch}";
+#endif
     }
 
     private static bool HasMergedLibrary(string programDir)

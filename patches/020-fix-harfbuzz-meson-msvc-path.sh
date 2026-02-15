@@ -35,6 +35,7 @@ BEGIN { replaced=0; skip=0; }
         print "cross_ld_rest := $(wordlist 2,$(words $(cross_ld_cmd)),$(cross_ld_cmd))"
         print "cross_ld_native := $(call cross_path_to_native,$(cross_ld_path)) $(cross_ld_rest)"
         print "cross_ld := $(call python_listify,$(cross_ld_native))"
+        print "cross_pkg_config := $(if $(wildcard /mingw64/bin/pkgconf.exe),$(call cross_path_to_native,/mingw64/bin/pkgconf.exe),$(firstword $(PKG_CONFIG)))"
         print "cross_ar := $(call cross_path_to_native,$(AR))"
         print "cross_strip := $(call cross_path_to_native,$(STRIP))"
         replaced=1
@@ -63,7 +64,7 @@ END {
 cat > "$TARGET.sed" <<'EOF'
 s|^ar = '$(AR)'$|ar = '$(cross_ar)'|
 s|^strip = '$(STRIP)'$|strip = '$(cross_strip)'|
-s|^\([[:space:]]*\)\$(MESON) setup builddir \\$|\1CL= _CL_= CFLAGS= CXXFLAGS= CPPFLAGS= LDFLAGS= CC="$(cross_cc_native)" CXX="$(cross_cxx_native)" $(MESON) setup builddir \\|
+s|^\([[:space:]]*\)\$(MESON) setup builddir \\$|\1env -u CL -u _CL_ -u cl -u _cl_ -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS -u cflags -u cxxflags -u cppflags -u ldflags -u INCLUDE -u include CC="$(cross_cc_native)" CXX="$(cross_cxx_native)" PKG_CONFIG="$(cross_pkg_config)" $(MESON) setup builddir \\|
 EOF
 sed -f "$TARGET.sed" "$TARGET" > "$TARGET.tmp" && mv "$TARGET.tmp" "$TARGET"
 rm -f "$TARGET.sed"

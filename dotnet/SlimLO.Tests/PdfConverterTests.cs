@@ -1,6 +1,12 @@
+using System;
 using System.Buffers.Binary;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using SlimLO.Internal;
 using Xunit;
 
@@ -380,29 +386,28 @@ public class ConversionOptionsTests
     }
 
     [Fact]
-    public void RecordEquality_Works()
+    public void TwoInstances_WithSameValues_AreNotReferenceEqual()
     {
-        var opts1 = new ConversionOptions { PdfVersion = PdfVersion.PdfA2, Dpi = 150, TaggedPdf = true };
-        var opts2 = new ConversionOptions { PdfVersion = PdfVersion.PdfA2, Dpi = 150, TaggedPdf = true };
-        Assert.Equal(opts1, opts2);
+        var opts1 = new ConversionOptions { Dpi = 150 };
+        var opts2 = new ConversionOptions { Dpi = 150 };
+        Assert.NotSame(opts1, opts2);
     }
 
     [Fact]
-    public void RecordInequality_Works()
+    public void Properties_AreIndependent()
     {
         var opts1 = new ConversionOptions { Dpi = 150 };
         var opts2 = new ConversionOptions { Dpi = 300 };
-        Assert.NotEqual(opts1, opts2);
+        Assert.Equal(150, opts1.Dpi);
+        Assert.Equal(300, opts2.Dpi);
     }
 
     [Fact]
-    public void WithExpression_CreatesModifiedCopy()
+    public void NullableProperties_CanBeNull()
     {
-        var opts1 = new ConversionOptions { PdfVersion = PdfVersion.PdfA1, Dpi = 150 };
-        var opts2 = opts1 with { Dpi = 300 };
-        Assert.Equal(PdfVersion.PdfA1, opts2.PdfVersion);
-        Assert.Equal(300, opts2.Dpi);
-        Assert.Equal(150, opts1.Dpi);
+        var opts = new ConversionOptions();
+        Assert.Null(opts.PageRange);
+        Assert.Null(opts.Password);
     }
 
     [Fact]
@@ -905,6 +910,203 @@ public class ProtocolTests
         Assert.NotNull(result);
         Assert.Empty(result);
     }
+
+    // --- Snake-case JSON verification tests ---
+    // These verify that [JsonPropertyName] attributes produce correct snake_case
+    // on both net8.0 (source generator) and net6.0 (reflection-based).
+
+    [Fact]
+    public void Serialize_InitRequest_AllFieldsSnakeCase()
+    {
+        var request = new InitRequest
+        {
+            ResourcePath = "/test",
+            FontPaths = new[] { "/fonts" }
+        };
+        var bytes = Protocol.Serialize(request);
+        var json = Encoding.UTF8.GetString(bytes);
+
+        // Must use snake_case, not PascalCase
+        Assert.Contains("\"resource_path\"", json);
+        Assert.Contains("\"font_paths\"", json);
+        Assert.DoesNotContain("ResourcePath", json);
+        Assert.DoesNotContain("FontPaths", json);
+    }
+
+    [Fact]
+    public void Serialize_ConvertRequest_AllFieldsSnakeCase()
+    {
+        var request = new ConvertRequest
+        {
+            Id = 1,
+            Input = "/in",
+            Output = "/out",
+            Format = 1,
+            Options = new ConvertRequestOptions
+            {
+                PdfVersion = 1,
+                JpegQuality = 85,
+                Dpi = 300,
+                TaggedPdf = true,
+                PageRange = "1-5",
+                Password = "pwd"
+            }
+        };
+        var bytes = Protocol.Serialize(request);
+        var json = Encoding.UTF8.GetString(bytes);
+
+        Assert.Contains("\"pdf_version\"", json);
+        Assert.Contains("\"jpeg_quality\"", json);
+        Assert.Contains("\"tagged_pdf\"", json);
+        Assert.Contains("\"page_range\"", json);
+        Assert.DoesNotContain("PdfVersion", json);
+        Assert.DoesNotContain("JpegQuality", json);
+        Assert.DoesNotContain("TaggedPdf", json);
+        Assert.DoesNotContain("PageRange", json);
+    }
+
+    [Fact]
+    public void Serialize_ConvertBufferRequest_AllFieldsSnakeCase()
+    {
+        var request = new ConvertBufferRequest
+        {
+            Id = 1,
+            Format = 1,
+            DataSize = 1024
+        };
+        var bytes = Protocol.Serialize(request);
+        var json = Encoding.UTF8.GetString(bytes);
+
+        Assert.Contains("\"data_size\"", json);
+        Assert.DoesNotContain("DataSize", json);
+    }
+
+    // --- Partial read test ---
+
+    [Fact]
+    public async Task ReadExact_HandlesPartialReads()
+    {
+        // Write a message to a regular MemoryStream, then wrap it in a stream that
+        // returns 1 byte at a time to test the ReadExact loop
+        var ms = new MemoryStream();
+        var payload = Encoding.UTF8.GetBytes("{\"type\":\"test\",\"value\":12345}");
+        await Protocol.WriteMessageAsync(ms, payload, CancellationToken.None);
+        var rawBytes = ms.ToArray();
+
+        var slowStream = new SlowReadStream(rawBytes);
+        var result = await Protocol.ReadMessageAsync(slowStream, CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Equal(payload, result);
+    }
+
+    // --- Round-trip serialization tests ---
+
+    [Fact]
+    public void SerializeDeserialize_InitRequest_RoundTrips()
+    {
+        var request = new InitRequest
+        {
+            ResourcePath = "/opt/slimlo",
+            FontPaths = new[] { "/fonts/a", "/fonts/b" }
+        };
+        var bytes = Protocol.Serialize(request);
+        using var doc = Protocol.Deserialize(bytes);
+        var root = doc.RootElement;
+
+        Assert.Equal("init", root.GetProperty("type").GetString());
+        Assert.Equal("/opt/slimlo", root.GetProperty("resource_path").GetString());
+        Assert.Equal(2, root.GetProperty("font_paths").GetArrayLength());
+        Assert.Equal("/fonts/a", root.GetProperty("font_paths")[0].GetString());
+        Assert.Equal("/fonts/b", root.GetProperty("font_paths")[1].GetString());
+    }
+
+    [Fact]
+    public void SerializeDeserialize_ConvertRequest_WithAllOptions_RoundTrips()
+    {
+        var request = new ConvertRequest
+        {
+            Id = 42,
+            Input = "/in.docx",
+            Output = "/out.pdf",
+            Format = 1,
+            Options = new ConvertRequestOptions
+            {
+                PdfVersion = 2,
+                JpegQuality = 85,
+                Dpi = 300,
+                TaggedPdf = true,
+                PageRange = "1-5",
+                Password = "secret"
+            }
+        };
+        var bytes = Protocol.Serialize(request);
+        using var doc = Protocol.Deserialize(bytes);
+        var root = doc.RootElement;
+
+        Assert.Equal("convert", root.GetProperty("type").GetString());
+        Assert.Equal(42, root.GetProperty("id").GetInt32());
+        Assert.Equal("/in.docx", root.GetProperty("input").GetString());
+        Assert.Equal("/out.pdf", root.GetProperty("output").GetString());
+        Assert.Equal(1, root.GetProperty("format").GetInt32());
+
+        var opts = root.GetProperty("options");
+        Assert.Equal(2, opts.GetProperty("pdf_version").GetInt32());
+        Assert.Equal(85, opts.GetProperty("jpeg_quality").GetInt32());
+        Assert.Equal(300, opts.GetProperty("dpi").GetInt32());
+        Assert.True(opts.GetProperty("tagged_pdf").GetBoolean());
+        Assert.Equal("1-5", opts.GetProperty("page_range").GetString());
+        Assert.Equal("secret", opts.GetProperty("password").GetString());
+    }
+
+    [Fact]
+    public void SerializeDeserialize_ConvertBufferRequest_RoundTrips()
+    {
+        var request = new ConvertBufferRequest
+        {
+            Id = 7,
+            Format = 1,
+            DataSize = 65536
+        };
+        var bytes = Protocol.Serialize(request);
+        using var doc = Protocol.Deserialize(bytes);
+        var root = doc.RootElement;
+
+        Assert.Equal("convert_buffer", root.GetProperty("type").GetString());
+        Assert.Equal(7, root.GetProperty("id").GetInt32());
+        Assert.Equal(1, root.GetProperty("format").GetInt32());
+        Assert.Equal(65536, root.GetProperty("data_size").GetInt64());
+    }
+}
+
+/// <summary>
+/// A stream that returns only 1 byte per read call, simulating slow/chunked I/O.
+/// Used to test ReadExactAsync loop behavior.
+/// </summary>
+internal sealed class SlowReadStream : Stream
+{
+    private readonly byte[] _data;
+    private int _position;
+
+    public SlowReadStream(byte[] data) => _data = data;
+
+    public override bool CanRead => true;
+    public override bool CanSeek => false;
+    public override bool CanWrite => false;
+    public override long Length => _data.Length;
+    public override long Position { get => _position; set => throw new NotSupportedException(); }
+
+    public override int Read(byte[] buffer, int offset, int count)
+    {
+        if (_position >= _data.Length) return 0;
+        buffer[offset] = _data[_position++];
+        return 1; // always return just 1 byte
+    }
+
+    public override void Flush() { }
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+    public override void SetLength(long value) => throw new NotSupportedException();
+    public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
 }
 
 // ===========================================================================
@@ -1089,7 +1291,7 @@ public class PdfConverterIntegrationTests : IAsyncDisposable
 
     private PdfConverter? GetOrCreateConverter()
     {
-        if (_converter is not null) return _converter;
+        if (_converter != null) return _converter;
         if (!TestHelpers.CanRunIntegration()) return null;
 
         _converter = PdfConverter.Create(new PdfConverterOptions
@@ -1101,7 +1303,7 @@ public class PdfConverterIntegrationTests : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        if (_converter is not null)
+        if (_converter != null)
             await _converter.DisposeAsync();
     }
 
@@ -1440,7 +1642,7 @@ public class PdfConverterIntegrationTests : IAsyncDisposable
         await using var converter = PdfConverter.Create(new PdfConverterOptions
         {
             ResourcePath = TestHelpers.GetResourcePath(),
-            FontDirectories = [fontDir]
+            FontDirectories = new[] { fontDir }
         });
 
         var output = Path.Combine(Path.GetTempPath(), $"slimlo_barcode_{Guid.NewGuid():N}.pdf");
@@ -1819,7 +2021,7 @@ public class PdfConverterStreamIntegrationTests : IAsyncDisposable
 
     private PdfConverter? GetOrCreateConverter()
     {
-        if (_converter is not null) return _converter;
+        if (_converter != null) return _converter;
         if (!TestHelpers.CanRunIntegration()) return null;
         _converter = PdfConverter.Create(new PdfConverterOptions
         {
@@ -1830,7 +2032,7 @@ public class PdfConverterStreamIntegrationTests : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        if (_converter is not null)
+        if (_converter != null)
             await _converter.DisposeAsync();
     }
 
@@ -2201,7 +2403,7 @@ public class PdfConverterStreamIntegrationTests : IAsyncDisposable
         await using var converter = PdfConverter.Create(new PdfConverterOptions
         {
             ResourcePath = TestHelpers.GetResourcePath(),
-            FontDirectories = [fontDir]
+            FontDirectories = new[] { fontDir }
         });
 
         var docxBytes = await File.ReadAllBytesAsync(fixturePath);
@@ -2238,7 +2440,7 @@ public class PdfConverterStreamIntegrationTests : IAsyncDisposable
         await using var converter = PdfConverter.Create(new PdfConverterOptions
         {
             ResourcePath = TestHelpers.GetResourcePath(),
-            FontDirectories = [fontDir]
+            FontDirectories = new[] { fontDir }
         });
 
         var docxBytes = await File.ReadAllBytesAsync(fixturePath);

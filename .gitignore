@@ -13,6 +13,10 @@ dotnet/**/bin/
 dotnet/**/obj/
 dotnet/nupkgs/
 
+# Java build artifacts
+java/**/target/
+*.class
+
 # Example app build output
 example/bin/
 example/obj/
