@@ -35,7 +35,7 @@ BEGIN { replaced=0; skip=0; }
         print "cross_ld_rest := $(wordlist 2,$(words $(cross_ld_cmd)),$(cross_ld_cmd))"
         print "cross_ld_native := $(call cross_path_to_native,$(cross_ld_path)) $(cross_ld_rest)"
         print "cross_ld := $(call python_listify,$(cross_ld_native))"
-        print "cross_pkg_config := $(if $(filter WNT,$(OS)),$(call cross_path_to_native,/mingw64/bin/pkgconf.exe),$(firstword $(PKG_CONFIG)))"
+        print "cross_pkg_config := $(if $(wildcard /mingw64/bin/pkgconf.exe),$(call cross_path_to_native,/mingw64/bin/pkgconf.exe),$(firstword $(PKG_CONFIG)))"
         print "cross_ar := $(call cross_path_to_native,$(AR))"
         print "cross_strip := $(call cross_path_to_native,$(STRIP))"
         replaced=1
