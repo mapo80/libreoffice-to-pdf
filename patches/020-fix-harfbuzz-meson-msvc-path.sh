@@ -46,10 +46,9 @@ BEGIN { replaced=0; skip=0; }
         print "hb_icu_dir := $(if $(filter WNT,$(OS)),$(shell cygpath -m \"$(gb_UnpackedTarball_workdir)/icu\"),$(gb_UnpackedTarball_workdir)/icu)"
         print "hb_pkg_sep := $(if $(filter WNT,$(OS)),;,:)"
         print "hb_pkg_config_path := $(if $(filter WNT,$(OS)),$(hb_graphite_dir)$(hb_pkg_sep)$(hb_icu_dir),${PKG_CONFIG_PATH}$(LIBO_PATH_SEPARATOR)$(gb_UnpackedTarball_workdir)/graphite$(if $(SYSTEM_ICU),,$(LIBO_PATH_SEPARATOR)$(gb_UnpackedTarball_workdir)/icu))"
-        print "# Reconstruct MSVC INCLUDE from SOLARINC (-I flags -> ;-separated paths)"
-        print "# Meson needs INCLUDE for cl.exe to find stdio.h etc. We must unset the gbuild"
-        print "# INCLUDE (which has -I flags) but provide the real SDK/MSVC include paths."
-        print "hb_msvc_include := $(subst -I,,$(subst -I ,;,$(strip $(SOLARINC))))"
+        print "# Reconstruct MSVC INCLUDE from SOLARINC for meson cl.exe (needs stdio.h etc.)"
+        print "# Converts -IC:/path1 -IC:/path2 to C:/path1;C:/path2"
+        print "hb_msvc_include := $(patsubst -I%,%,$(subst $(WHITESPACE)-I,;,$(strip $(SOLARINC))))"
         replaced=1
         skip=1
         next
