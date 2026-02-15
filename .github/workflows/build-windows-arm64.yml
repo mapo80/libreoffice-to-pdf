@@ -43,8 +43,9 @@ jobs:
         shell: msys2 {0}
         run: |
           # LO (build_os=cygwin) expects a working pkgconf-2.4.3.exe
-          # ARM64 cross-compile: no NASM needed (x86 SIMD only)
-          pacman -S --noconfirm mingw-w64-x86_64-pkgconf mingw-w64-x86_64-ninja
+          # NASM is needed even for ARM64 cross-compile: the x64 cross-toolset
+          # (workdir_for_build) builds OpenSSL x64 which requires NASM.
+          pacman -S --noconfirm mingw-w64-x86_64-pkgconf mingw-w64-x86_64-nasm mingw-w64-x86_64-ninja
           export PATH="/usr/local/bin:/mingw64/bin:$PATH"
           mkdir -p /usr/local/bin
           ln -sf /usr/bin/cygpath /usr/local/bin/wslpath
@@ -131,6 +132,12 @@ jobs:
           "$WIN_PYTHON" --version
           echo "Using PYTHON_FOR_BUILD=$PYTHON_FOR_BUILD"
           echo "TARGET_ARCH=$TARGET_ARCH (cross-compiling for ARM64)"
+          # NASM is needed for the x64 cross-toolset (OpenSSL x64 build)
+          NASM_BIN="$(command -v nasm || command -v nasm.exe || true)"
+          [ -n "$NASM_BIN" ] || (echo "nasm not found in PATH" && exit 1)
+          export NASM="$NASM_BIN"
+          echo "Using NASM=$NASM"
+          "$NASM" -v
           export NPROC=4
           export LO_SRC_DIR=/d/lo-src
           export OUTPUT_DIR=/d/a/${{ github.event.repository.name }}/${{ github.event.repository.name }}/output
