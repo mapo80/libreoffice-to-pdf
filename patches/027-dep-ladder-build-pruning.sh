@@ -496,14 +496,112 @@ changes += toggle_once(
 # S04 (xmlsecurity/xsec) is intentionally not baseline-enforced.
 # It must be introduced as an explicit dep step once baseline is stable.
 
-# S05: hard-drop crypto signing path in svl for SlimLO.
+# Normalize older S05 variant that removed cryptosign without stubbing symbols.
 changes += toggle_once(
     root / "svl/Library_svl.mk",
     "    svl/source/crypto/cryptosign \\\n",
     "    $(if $(ENABLE_SLIMLO),,svl/source/crypto/cryptosign) \\\n",
-    dep_step >= 5,
-    "S05 svl cryptosign guard",
+    False,
+    "S05 normalize legacy cryptosign drop-only guard",
 )
+
+# S05: replace cryptosign with a slim stub when ENABLE_SLIMLO.
+# This keeps required symbols for PDF/signing call sites while avoiding NSS/curl codepaths.
+changes += toggle_once(
+    root / "svl/Library_svl.mk",
+    "    svl/source/crypto/cryptosign \\\n",
+    "    $(if $(ENABLE_SLIMLO),svl/source/crypto/cryptosign_stub,svl/source/crypto/cryptosign) \\\n",
+    dep_step >= 5,
+    "S05 svl cryptosign stub guard",
+)
+
+stub_source = """/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/*
+ * This file is part of the LibreOffice project.
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ */
+
+#include <svl/cryptosign.hxx>
+#include <svl/sigstruct.hxx>
+#include <tools/stream.hxx>
+
+namespace svl::crypto {
+
+std::vector<unsigned char> DecodeHexString(std::string_view rHex)
+{
+    auto hex = [](char c) -> int {
+        if (c >= '0' && c <= '9')
+            return c - '0';
+        if (c >= 'a' && c <= 'f')
+            return 10 + (c - 'a');
+        if (c >= 'A' && c <= 'F')
+            return 10 + (c - 'A');
+        return -1;
+    };
+
+    if ((rHex.size() % 2) != 0)
+        return {};
+
+    std::vector<unsigned char> out;
+    out.reserve(rHex.size() / 2);
+    for (size_t i = 0; i < rHex.size(); i += 2)
+    {
+        int hi = hex(rHex[i]);
+        int lo = hex(rHex[i + 1]);
+        if (hi < 0 || lo < 0)
+            return {};
+        out.push_back(static_cast<unsigned char>((hi << 4) | lo));
+    }
+    return out;
+}
+
+bool Signing::Sign(OStringBuffer& rCMSHexBuffer)
+{
+    (void)rCMSHexBuffer;
+    return false;
+}
+
+bool Signing::Verify(const std::vector<unsigned char>& /*aData*/, const bool /*bNonDetached*/,
+                     const std::vector<unsigned char>& /*aSignature*/,
+                     SignatureInformation& /*rInformation*/)
+{
+    return false;
+}
+
+bool Signing::Verify(SvStream& /*rStream*/,
+                     const std::vector<std::pair<size_t, size_t>>& /*aByteRanges*/,
+                     const bool /*bNonDetached*/,
+                     const std::vector<unsigned char>& /*aSignature*/,
+                     SignatureInformation& /*rInformation*/)
+{
+    return false;
+}
+
+void Signing::appendHex(sal_Int8 nInt, OStringBuffer& rBuffer)
+{
+    static constexpr char kHex[] = "0123456789ABCDEF";
+    const unsigned char v = static_cast<unsigned char>(nInt);
+    rBuffer.append(kHex[(v >> 4) & 0x0F]);
+    rBuffer.append(kHex[v & 0x0F]);
+}
+
+bool CertificateOrName::Is() const
+{
+    return m_xCertificate.is() || !m_aName.isEmpty();
+}
+
+} // namespace svl::crypto
+
+/* vim:set shiftwidth=4 softtabstop=4 expandtab: */
+"""
+
+stub_path = root / "svl/source/crypto/cryptosign_stub.cxx"
+if not stub_path.exists() or stub_path.read_text(encoding="utf-8") != stub_source:
+    stub_path.write_text(stub_source, encoding="utf-8")
+    changes += 1
 
 # S06: attempt to remove lcms2 from vcl externals in SlimLO.
 changes += toggle_once(
