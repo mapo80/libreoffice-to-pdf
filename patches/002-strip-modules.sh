@@ -11,18 +11,24 @@ LO_SRC="${1:?Missing LO source dir}"
 
 REPO_MODULE="$LO_SRC/RepositoryModule_host.mk"
 
-if grep -q 'ENABLE_SLIMLO' "$REPO_MODULE"; then
-    echo "    RepositoryModule_host.mk already patched (skipping)"
-    exit 0
-fi
+# Always restore from upstream before applying SlimLO wrappers so updates to this
+# script take effect on already-patched source trees.
+git -C "$LO_SRC" checkout -- RepositoryModule_host.mk 2>/dev/null || true
+echo "    Restored RepositoryModule_host.mk from git"
 
 # Modules to remove for SlimLO builds.
 # Each of these appears as a line like "	modulename \" in the main module list.
 # We wrap them with: $(if $(ENABLE_SLIMLO),, modulename) \
 MODULES_TO_STRIP=(
+    # Keep app modules in clean builds: installer/package graph still expects
+    # their deliverables (e.g. libsdlo/libsclo). Runtime slimming happens via
+    # merged/install guards + extraction, not by breaking this dependency graph.
+    "writerperfect"
+    "hwpfilter"
+    "xmlsecurity"
+
     # Database (leaf — reportdesign already guarded by DBCONNECTIVITY)
     "dbaccess"
-    "reportbuilder"
 
     # UI integration (leaf modules only)
     # NOTE: Do NOT strip cui, avmedia, scripting, extensions, UnoControls —
@@ -33,11 +39,6 @@ MODULES_TO_STRIP=(
 
     # Extras (templates, galleries — leaf)
     "extras"
-
-    # Legacy filters (leaf — no reverse deps)
-    "lotuswordpro"
-    "hwpfilter"
-    "writerperfect"
 
     # Java components (disabled by --with-java=no, safe to strip)
     "bean"
@@ -63,11 +64,6 @@ MODULES_TO_STRIP=(
     "unoil"
     "ridljar"
     "net_ure"
-
-    # Scripting / macro / signature stack (DOCX->PDF does not require these)
-    "basic"
-    "scripting"
-    "xmlsecurity"
 
     # Platform-specific (leaf)
     "embedserv"

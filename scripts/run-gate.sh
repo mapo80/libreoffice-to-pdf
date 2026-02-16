@@ -27,6 +27,46 @@ GATE_DOTNET_FILTER="${GATE_DOTNET_FILTER:-FullyQualifiedName~PdfConverterIntegra
 run_with_timeout() {
     local seconds="$1"
     shift
+    if command -v python3 >/dev/null 2>&1; then
+        python3 - "$seconds" "$@" <<'PY'
+import os
+import signal
+import subprocess
+import sys
+import time
+
+timeout = int(sys.argv[1])
+cmd = sys.argv[2:]
+
+proc = subprocess.Popen(cmd, preexec_fn=os.setsid)
+deadline = time.monotonic() + timeout
+
+while True:
+    rc = proc.poll()
+    if rc is not None:
+        sys.exit(rc)
+
+    if time.monotonic() >= deadline:
+        # Best effort process-group termination. If a child is in uninterruptible
+        # state, do not block forever waiting for it.
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        time.sleep(1.0)
+        if proc.poll() is None:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        sys.exit(124)
+
+    time.sleep(0.2)
+PY
+        return $?
+    fi
+
+    # Fallback for environments without python3.
     local rc=0
     perl -e 'alarm shift; exec @ARGV' "$seconds" "$@" || rc=$?
     if [ "$rc" -eq 142 ]; then
@@ -38,6 +78,8 @@ run_with_timeout() {
 cleanup_orphans() {
     pkill -f '/slimlo-prune-probe\..*/program/slimlo_worker' 2>/dev/null || true
     pkill -f '/slimlo-gate\..*/program/slimlo_worker' 2>/dev/null || true
+    pkill -f '/program/slimlo_worker(\.exe)?$' 2>/dev/null || true
+    pkill -f '/tmp/slimlo_test_convert' 2>/dev/null || true
 }
 
 trap cleanup_orphans EXIT
@@ -46,6 +88,9 @@ echo "=== SlimLO Gate ==="
 echo "Artifact: $ARTIFACT_DIR"
 echo "C timeout: ${GATE_TIMEOUT_C}s"
 echo "Dotnet timeout: ${GATE_TIMEOUT_DOTNET}s"
+
+# Best-effort cleanup from previous interrupted probes before starting.
+cleanup_orphans
 
 echo "[1/2] C smoke gate (tests/test.sh)"
 set +e

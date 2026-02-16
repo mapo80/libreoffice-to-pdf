@@ -18,7 +18,8 @@ if ! command -v dos2unix >/dev/null 2>&1; then
     COUNT=0
     while IFS= read -r -d '' pf; do
         if file "$pf" | grep -q 'CRLF'; then
-            sed -i 's/\r$//' "$pf"
+            sed -i.bak 's/\r$//' "$pf"
+            rm -f "$pf.bak"
             COUNT=$((COUNT + 1))
         fi
     done < <(find "$EXTERNAL" -name "*.patch*" -print0 2>/dev/null)

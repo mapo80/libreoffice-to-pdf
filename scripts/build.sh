@@ -6,12 +6,22 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 LO_VERSION="$(cat "$PROJECT_DIR/LO_VERSION" | tr -d '[:space:]')"
-LO_SRC_DIR="${LO_SRC_DIR:-$PROJECT_DIR/lo-src}"
-OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_DIR/output}"
+to_abs_path() {
+    case "$1" in
+        /*) printf '%s\n' "$1" ;;
+        *) printf '%s\n' "$PROJECT_DIR/$1" ;;
+    esac
+}
+
+LO_SRC_DIR="$(to_abs_path "${LO_SRC_DIR:-$PROJECT_DIR/lo-src}")"
+OUTPUT_DIR="$(to_abs_path "${OUTPUT_DIR:-$PROJECT_DIR/output}")"
 NPROC="${NPROC:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
 DOCX_AGGRESSIVE="${DOCX_AGGRESSIVE:-1}"
 SKIP_CONFIGURE="${SKIP_CONFIGURE:-0}"
+CLEAN_BUILD="${CLEAN_BUILD:-0}"
+SLIMLO_DEP_STEP="${SLIMLO_DEP_STEP:-0}"
 SLIMLO_DISTRO_CONFIG_PATH="${SLIMLO_DISTRO_CONFIG_PATH:-}"
+SKIP_POSTAUTOGEN_PATCHES="${SKIP_POSTAUTOGEN_PATCHES:-0}"
 
 case "$DOCX_AGGRESSIVE" in
     1) ;;
@@ -25,6 +35,35 @@ case "$DOCX_AGGRESSIVE" in
         exit 1
         ;;
 esac
+
+case "$CLEAN_BUILD" in
+    0|1) ;;
+    *)
+        echo "ERROR: CLEAN_BUILD must be 0 or 1 (got '$CLEAN_BUILD')."
+        exit 1
+        ;;
+esac
+
+case "$SLIMLO_DEP_STEP" in
+    ''|*[!0-9]*)
+        echo "ERROR: SLIMLO_DEP_STEP must be an integer >= 0 (got '$SLIMLO_DEP_STEP')."
+        exit 1
+        ;;
+esac
+
+case "$SKIP_POSTAUTOGEN_PATCHES" in
+    0|1) ;;
+    *)
+        echo "ERROR: SKIP_POSTAUTOGEN_PATCHES must be 0 or 1 (got '$SKIP_POSTAUTOGEN_PATCHES')."
+        exit 1
+        ;;
+esac
+
+if [ "$SKIP_CONFIGURE" = "1" ] && [ "$CLEAN_BUILD" = "1" ]; then
+    echo "ERROR: CLEAN_BUILD=1 cannot be combined with SKIP_CONFIGURE=1."
+    echo "       A clean build requires running configure."
+    exit 1
+fi
 
 # Detect platform
 case "$(uname -s)" in
@@ -104,6 +143,20 @@ EOF
     echo "Installed local wslpath shim: $SHIM_DIR/wslpath"
 fi
 
+# Ensure a "python" command exists for LO make targets that still invoke it directly.
+# On recent macOS systems only python3 may be available.
+if ! command -v python >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
+    SHIM_DIR="$PROJECT_DIR/.slimlo-tools"
+    mkdir -p "$SHIM_DIR"
+    cat > "$SHIM_DIR/python" <<'EOF'
+#!/usr/bin/env bash
+exec python3 "$@"
+EOF
+    chmod +x "$SHIM_DIR/python"
+    export PATH="$SHIM_DIR:$PATH"
+    echo "Installed local python shim: $SHIM_DIR/python -> python3"
+fi
+
 # macOS: Ensure Homebrew tools take precedence over system ones.
 # LO requires GNU Make >= 4.0 (macOS ships 3.81) and gperf >= 3.1 (macOS ships 3.0.3).
 if [ "$PLATFORM" = "macos" ]; then
@@ -115,6 +168,14 @@ if [ "$PLATFORM" = "macos" ]; then
     [ -d "/usr/local/bin" ] && export PATH="/usr/local/bin:$PATH"
 fi
 
+if [ -z "${MAKE_BIN:-}" ]; then
+    if [ "$PLATFORM" = "macos" ] && command -v gmake >/dev/null 2>&1; then
+        MAKE_BIN="gmake"
+    else
+        MAKE_BIN="make"
+    fi
+fi
+
 echo "============================================"
 echo " SlimLO Build"
 echo " LO Version:  $LO_VERSION"
@@ -122,9 +183,14 @@ echo " Platform:    $PLATFORM"
 echo " Source dir:   $LO_SRC_DIR"
 echo " Output dir:   $OUTPUT_DIR"
 echo " Parallelism:  $NPROC"
+echo " Make:         $MAKE_BIN"
 if [ "$SKIP_CONFIGURE" = "1" ]; then
 echo " Mode:         build-only (skip configure)"
 fi
+if [ "$CLEAN_BUILD" = "1" ]; then
+echo " Clean build:  enabled (workdir/instdir/output reset)"
+fi
+echo " Dep step:     $SLIMLO_DEP_STEP"
 echo " Profile:      docx-aggressive (always)"
 echo "============================================"
 echo ""
@@ -135,6 +201,9 @@ if [ "$SKIP_CONFIGURE" = "1" ]; then
         echo "       Run a full build first before using --skip-configure."
         exit 1
     fi
+    echo ">>> Step 4.2: Verifying configured feature set..."
+    "$SCRIPT_DIR/assert-config-features.sh" "$LO_SRC_DIR/config_host.mk" "$PLATFORM"
+    echo ""
     echo ">>> Skipping steps 1-4.5 (SKIP_CONFIGURE=1)"
     echo ""
     cd "$LO_SRC_DIR"
@@ -143,7 +212,7 @@ else
 # -----------------------------------------------------------
 # Step 1: Clone upstream source (shallow for speed)
 # -----------------------------------------------------------
-if [ ! -d "$LO_SRC_DIR/.git" ]; then
+if [ ! -e "$LO_SRC_DIR/.git" ]; then
     echo ">>> Step 1: Cloning LibreOffice $LO_VERSION..."
     # Use larger buffers for reliability on slow/flaky connections.
     # MSYS2 git may segfault after a successful clone on large repos,
@@ -151,7 +220,7 @@ if [ ! -d "$LO_SRC_DIR/.git" ]; then
     git -c http.postBuffer=524288000 -c pack.windowMemory=256m \
         clone --depth 1 --branch "$LO_VERSION" \
         https://github.com/LibreOffice/core.git "$LO_SRC_DIR" || true
-    if [ ! -d "$LO_SRC_DIR/.git" ] || [ ! -f "$LO_SRC_DIR/configure.ac" ]; then
+    if [ ! -e "$LO_SRC_DIR/.git" ] || [ ! -f "$LO_SRC_DIR/configure.ac" ]; then
         echo "ERROR: git clone failed — $LO_SRC_DIR is incomplete"
         exit 1
     fi
@@ -174,6 +243,15 @@ else
     fi
 fi
 echo ""
+
+if [ "$CLEAN_BUILD" = "1" ]; then
+    echo ">>> Step 1.5: Cleaning previous build outputs..."
+    rm -rf "$LO_SRC_DIR/workdir" "$LO_SRC_DIR/instdir" "$LO_SRC_DIR/solver"
+    rm -f "$LO_SRC_DIR/config.log" "$LO_SRC_DIR/config.status" "$LO_SRC_DIR/config_host.mk" "$LO_SRC_DIR/Makefile"
+    rm -rf "$OUTPUT_DIR"
+    echo "    Removed lo-src/workdir, lo-src/instdir, lo-src/solver, configure outputs, and $OUTPUT_DIR"
+    echo ""
+fi
 
 # -----------------------------------------------------------
 # Step 2: Apply SlimLO patches
@@ -216,7 +294,17 @@ if [ -n "${PKG_CONFIG:-}" ]; then
     echo "    Using PKG_CONFIG=$PKG_CONFIG"
     AUTOGEN_ARGS=("PKG_CONFIG=$PKG_CONFIG" "${AUTOGEN_ARGS[@]}")
 fi
+python_candidate_usable() {
+    local py="$1"
+    [ -n "$py" ] || return 1
+    "$py" -c 'import sys' >/dev/null 2>&1
+}
+
 PYTHON_BUILD_BIN="${PYTHON_FOR_BUILD:-${PYTHON:-}}"
+if [ -n "${PYTHON_BUILD_BIN:-}" ] && ! python_candidate_usable "$PYTHON_BUILD_BIN"; then
+    echo "    WARNING: configured python is not runnable: $PYTHON_BUILD_BIN"
+    PYTHON_BUILD_BIN=""
+fi
 if [ "$PLATFORM" = "windows" ]; then
     case "${PYTHON_BUILD_BIN:-}" in
         ""|/usr/bin/*|/mingw*/*)
@@ -230,22 +318,45 @@ if [ "$PLATFORM" = "windows" ]; then
                     done
                     ;;
             esac
-            if [ -n "$WIN_PYTHON" ] && [ -x "$WIN_PYTHON" ]; then
+            if [ -n "$WIN_PYTHON" ] && [ -x "$WIN_PYTHON" ] && python_candidate_usable "$WIN_PYTHON"; then
                 PYTHON_BUILD_BIN="$WIN_PYTHON"
             fi
             ;;
     esac
 fi
-if [ -z "$PYTHON_BUILD_BIN" ] && command -v python >/dev/null 2>&1; then
-    PYTHON_BUILD_BIN="$(command -v python)"
+
+pick_python_candidate() {
+    local cmd="$1"
+    if [ -n "$PYTHON_BUILD_BIN" ]; then
+        return 0
+    fi
+    command -v "$cmd" >/dev/null 2>&1 || return 0
+    local candidate
+    candidate="$(command -v "$cmd")"
+    if python_candidate_usable "$candidate"; then
+        PYTHON_BUILD_BIN="$candidate"
+    fi
+}
+
+if [ -z "$PYTHON_BUILD_BIN" ]; then
+    if [ "$PLATFORM" = "macos" ]; then
+        pick_python_candidate python3
+        pick_python_candidate python
+    else
+        pick_python_candidate python
+        pick_python_candidate python3
+    fi
 fi
-if [ -z "$PYTHON_BUILD_BIN" ] && command -v python3 >/dev/null 2>&1; then
-    PYTHON_BUILD_BIN="$(command -v python3)"
+
+if [ -z "$PYTHON_BUILD_BIN" ]; then
+    echo "ERROR: unable to find a runnable Python interpreter for build steps."
+    exit 1
 fi
+
 if [ -n "$PYTHON_BUILD_BIN" ]; then
     echo "    Using PYTHON_FOR_BUILD=$PYTHON_BUILD_BIN"
     export PYTHON_FOR_BUILD="$PYTHON_BUILD_BIN"
-    export PYTHON="${PYTHON:-$PYTHON_BUILD_BIN}"
+    export PYTHON="$PYTHON_BUILD_BIN"
 fi
 if [ "$PLATFORM" = "windows" ]; then
     WIN_ARCH="$(uname -m 2>/dev/null || echo unknown)"
@@ -309,23 +420,30 @@ if [ "$PLATFORM" = "windows" ] && [ -f "$LO_SRC_DIR/config_host.mk" ]; then
             ;;
     esac
 fi
+
+echo ">>> Step 4.2: Verifying configured feature set..."
+"$SCRIPT_DIR/assert-config-features.sh" "$LO_SRC_DIR/config_host.mk" "$PLATFORM"
 echo ""
 
 # -----------------------------------------------------------
 # Step 4.5: Apply post-autogen patches
 # -----------------------------------------------------------
-echo ">>> Step 4.5: Applying post-autogen patches..."
-for patch in "$PROJECT_DIR"/patches/*.postautogen; do
-    [ -f "$patch" ] || continue
-    echo "    Running $(basename "$patch")"
-    bash "$patch" "$LO_SRC_DIR"
-done
-# Force re-link of merged lib (ldflags change not detected by make)
-case "$PLATFORM" in
-    windows) rm -f "$LO_SRC_DIR/workdir/LinkTarget/Library/mergedlo.dll" 2>/dev/null || true ;;
-    macos)   rm -f "$LO_SRC_DIR/workdir/LinkTarget/Library/libmergedlo.dylib" 2>/dev/null || true ;;
-    *)       rm -f "$LO_SRC_DIR/workdir/LinkTarget/Library/libmergedlo.so" 2>/dev/null || true ;;
-esac
+if [ "$SKIP_POSTAUTOGEN_PATCHES" = "1" ]; then
+    echo ">>> Step 4.5: Skipping post-autogen patches (SKIP_POSTAUTOGEN_PATCHES=1)..."
+else
+    echo ">>> Step 4.5: Applying post-autogen patches..."
+    for patch in "$PROJECT_DIR"/patches/*.postautogen; do
+        [ -f "$patch" ] || continue
+        echo "    Running $(basename "$patch")"
+        bash "$patch" "$LO_SRC_DIR"
+    done
+    # Force re-link of merged lib (ldflags change not detected by make)
+    case "$PLATFORM" in
+        windows) rm -f "$LO_SRC_DIR/workdir/LinkTarget/Library/mergedlo.dll" 2>/dev/null || true ;;
+        macos)   rm -f "$LO_SRC_DIR/workdir/LinkTarget/Library/libmergedlo.dylib" 2>/dev/null || true ;;
+        *)       rm -f "$LO_SRC_DIR/workdir/LinkTarget/Library/libmergedlo.so" 2>/dev/null || true ;;
+    esac
+fi
 echo ""
 
 fi # end SKIP_CONFIGURE
@@ -335,16 +453,17 @@ fi # end SKIP_CONFIGURE
 # -----------------------------------------------------------
 echo ">>> Step 5: Building (this will take a while)..."
 # Verify GNU Make >= 4.0 (macOS system make 3.81 can't handle nested define/endef in LO makefiles)
-MAKE_VERSION=$(make --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
-if [ "$(echo "$MAKE_VERSION < 4.0" | bc 2>/dev/null)" = "1" ]; then
-    echo "ERROR: GNU Make >= 4.0 required (found $MAKE_VERSION)."
+MAKE_VERSION=$("$MAKE_BIN" --version 2>/dev/null | head -1 | grep -oE '[0-9]+([.][0-9]+)+' | head -1 || true)
+MAKE_MAJOR="${MAKE_VERSION%%.*}"
+if [ -z "$MAKE_VERSION" ] || [ -z "$MAKE_MAJOR" ] || [ "$MAKE_MAJOR" -lt 4 ]; then
+    echo "ERROR: GNU Make >= 4.0 required (found $MAKE_VERSION via $MAKE_BIN)."
     echo "On macOS: brew install make"
     exit 1
 fi
 if [ "$PLATFORM" = "windows" ]; then
-    MSYSTEM= WSL= make -j"$NPROC"
+    MSYSTEM= WSL= "$MAKE_BIN" -j"$NPROC"
 else
-    make -j"$NPROC"
+    "$MAKE_BIN" -j"$NPROC"
 fi
 echo ""
 
@@ -366,6 +485,9 @@ echo ""
 # -----------------------------------------------------------
 echo ">>> Step 7: Building SlimLO C API..."
 if [ -f "$PROJECT_DIR/slimlo-api/CMakeLists.txt" ]; then
+    if [ "$CLEAN_BUILD" = "1" ]; then
+        rm -rf "$PROJECT_DIR/slimlo-api/build"
+    fi
     cmake -S "$PROJECT_DIR/slimlo-api" \
           -B "$PROJECT_DIR/slimlo-api/build" \
           -DINSTDIR="$INSTDIR_ROOT" \

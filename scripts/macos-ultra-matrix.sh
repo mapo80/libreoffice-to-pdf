@@ -14,10 +14,15 @@ BASE_CONF="${BASE_CONF:-$PROJECT_DIR/distro-configs/SlimLO-macOS.conf}"
 LO_SRC_DIR="${LO_SRC_DIR:-$PROJECT_DIR/lo-src}"
 MATRIX_OUT_DIR="${MATRIX_OUT_DIR:-$PROJECT_DIR/artifacts/matrix-macos}"
 MATRIX_JSON="${MATRIX_JSON:-$PROJECT_DIR/artifacts/matrix-results-macos.json}"
+DEPS_ALLOWLIST="${DEPS_ALLOWLIST:-$PROJECT_DIR/artifacts/deps-allowlist-macos.txt}"
 NPROC="${NPROC:-$(sysctl -n hw.ncpu 2>/dev/null || echo 8)}"
 
 if [ ! -f "$BASE_CONF" ]; then
     echo "ERROR: base config not found: $BASE_CONF"
+    exit 1
+fi
+if [ ! -f "$DEPS_ALLOWLIST" ]; then
+    echo "ERROR: dependency allowlist not found: $DEPS_ALLOWLIST"
     exit 1
 fi
 
@@ -50,7 +55,8 @@ make_profile_conf() {
             ;;
         P3)
             add_line "--disable-nss"
-            add_line "--with-tls=openssl"
+            add_line "--disable-openssl"
+            add_line "--with-tls=no"
             ;;
         P4)
             add_line "--disable-gui"
@@ -63,7 +69,8 @@ make_profile_conf() {
             add_line "--disable-scripting"
             add_line "--disable-curl"
             add_line "--disable-nss"
-            add_line "--with-tls=openssl"
+            add_line "--disable-openssl"
+            add_line "--with-tls=no"
             add_line "--disable-gui"
             sed -i.bak 's/^--enable-mergelibs\(=.*\)\?$/--enable-mergelibs=more/' "$out_conf"
             rm -f "$out_conf.bak"
@@ -80,6 +87,7 @@ echo "Base config: $BASE_CONF"
 echo "LO_SRC_DIR:  $LO_SRC_DIR"
 echo "Output dir:  $MATRIX_OUT_DIR"
 echo "Profiles:    ${profiles[*]}"
+echo "Allowlist:   $DEPS_ALLOWLIST"
 echo ""
 
 for profile in "${profiles[@]}"; do
@@ -114,6 +122,15 @@ for profile in "${profiles[@]}"; do
     if [ "$GATE_RC" -ne 0 ]; then
         echo ">>> [$profile] gate failed (rc=$GATE_RC)"
         printf '%s\t%s\t%s\t%s\t%s\n' "$profile" "gate_failed" "$GATE_RC" "0" "$OUTPUT_DIR" >> "$TMP_RESULTS"
+        continue
+    fi
+
+    echo ">>> [$profile] dependency allowlist"
+    DEPS_RC=0
+    "$PROJECT_DIR/scripts/check-deps-allowlist.sh" "$OUTPUT_DIR" "$DEPS_ALLOWLIST" || DEPS_RC=$?
+    if [ "$DEPS_RC" -ne 0 ]; then
+        echo ">>> [$profile] deps check failed (rc=$DEPS_RC)"
+        printf '%s\t%s\t%s\t%s\t%s\n' "$profile" "deps_failed" "$DEPS_RC" "0" "$OUTPUT_DIR" >> "$TMP_RESULTS"
         continue
     fi
 
@@ -156,7 +173,7 @@ result = {
     "platform": "macos",
     "profiles": rows,
     "best_profile": best,
-    "selection_rule": "minimum size_kb among profiles with status=passed",
+    "selection_rule": "minimum size_kb among profiles that passed build + run-gate + deps-allowlist",
 }
 
 with open(sys.argv[2], "w", encoding="utf-8") as f:

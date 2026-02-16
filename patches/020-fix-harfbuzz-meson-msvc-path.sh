@@ -19,6 +19,17 @@ if [ ! -f "$TARGET" ]; then
     exit 0
 fi
 
+# This patch is Windows/MSYS-specific. On macOS/Linux keep upstream file unchanged.
+case "$(uname -s)" in
+    CYGWIN*|MINGW*|MSYS*)
+        ;;
+    *)
+        git -C "$LO_SRC" checkout -- external/harfbuzz/ExternalProject_harfbuzz.mk 2>/dev/null || true
+        echo "    Non-Windows host: restored upstream HarfBuzz makefile (skipping patch)"
+        exit 0
+        ;;
+esac
+
 awk '
 BEGIN { replaced=0; skip=0; }
 {
@@ -26,7 +37,7 @@ BEGIN { replaced=0; skip=0; }
         print $0
         print "# Normalize POSIX compiler/linker paths for meson when running under Windows python"
         print "# Convert /... paths to native Windows paths for Meson (python.exe)."
-        print "cross_path_to_native = $(if $(filter /%,$(1)),$(shell cygpath -m \"$(1)\"),$(1))"
+        print "cross_path_to_native = $(if $(filter WNT,$(OS)),$(if $(filter /%,$(1)),$(shell cygpath -m \"$(1)\"),$(1)),$(1))"
         print "cross_cc_path := $(firstword $(gb_CC))"
         print "cross_cc_native := $(call cross_path_to_native,$(cross_cc_path))"
         print "cross_c = $(call python_listify,$(cross_cc_native))"
@@ -147,6 +158,7 @@ fi
 # The hb_pkg_config_path variable (set in the awk block above) handles this by
 # using ';' separator and cygpath-converted Windows paths on WNT.
 # Here we just need to replace the PKG_CONFIG_PATH= line to use the pre-built variable.
-sed -i 's|PKG_CONFIG_PATH="${PKG_CONFIG_PATH}$(LIBO_PATH_SEPARATOR)$(gb_UnpackedTarball_workdir)/graphite$(if $(SYSTEM_ICU),,$(LIBO_PATH_SEPARATOR)$(gb_UnpackedTarball_workdir)/icu)"|PKG_CONFIG_PATH="$(hb_pkg_config_path)"|' "$TARGET"
+sed -i.bak 's|PKG_CONFIG_PATH="${PKG_CONFIG_PATH}$(LIBO_PATH_SEPARATOR)$(gb_UnpackedTarball_workdir)/graphite$(if $(SYSTEM_ICU),,$(LIBO_PATH_SEPARATOR)$(gb_UnpackedTarball_workdir)/icu)"|PKG_CONFIG_PATH="$(hb_pkg_config_path)"|' "$TARGET"
+rm -f "$TARGET.bak"
 
 echo "    Patch 020 complete"

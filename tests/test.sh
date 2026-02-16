@@ -16,8 +16,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUTPUT_PDF="$SCRIPT_DIR/output.pdf"
-TEST_BINARY="/tmp/slimlo_test_convert"
-TEST_OUTPUT="/tmp/slimlo-test-output.pdf"
+TEST_BINARY="${TMPDIR:-/tmp}/slimlo_test_convert.$$"
+TEST_OUTPUT="${TMPDIR:-/tmp}/slimlo-test-output.$$.pdf"
+
+cleanup_test_artifacts() {
+    rm -f "$TEST_BINARY" "$TEST_OUTPUT"
+}
+trap cleanup_test_artifacts EXIT
 
 # -----------------------------------------------------------
 # Detect mode and artifact directory

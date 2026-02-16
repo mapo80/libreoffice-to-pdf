@@ -75,6 +75,7 @@ RUN chmod +x scripts/*.sh patches/*.sh
 # If not provided, Docker may cache the RUN layer even when scripts change.
 ARG SCRIPTS_HASH=default
 ARG NPROC=10
+ARG SLIMLO_DEP_STEP=0
 
 # --- Clone + Patch + Configure + Build in a SINGLE RUN ---
 # All operations that use the lo-src cache mount MUST be in one RUN.
@@ -94,6 +95,7 @@ ARG NPROC=10
 RUN --mount=type=cache,target=/build/lo-src \
     --mount=type=cache,target=/ccache \
     set -ex && \
+    echo "SLIMLO_DEP_STEP=$SLIMLO_DEP_STEP" && \
     LO_VERSION=$(cat LO_VERSION | tr -d '[:space:]') && \
     # --- Clone if needed ---
     # Logic:
@@ -123,7 +125,7 @@ RUN --mount=type=cache,target=/build/lo-src \
     # Hash all inputs that affect configure: distro config + patch scripts.
     # If hash matches cached value, skip patching + autogen entirely
     # (preserves timestamps → make stays incremental).
-    CONFIG_HASH=$(cat distro-configs/SlimLO.conf patches/*.sh patches/*.postautogen icu-filter.json | sha256sum | cut -d' ' -f1) && \
+    CONFIG_HASH=$( (cat distro-configs/SlimLO.conf patches/*.sh patches/*.postautogen icu-filter.json; echo "$SLIMLO_DEP_STEP") | sha256sum | cut -d' ' -f1) && \
     if [ -f "lo-src/.slimlo-config-hash" ] && \
        [ "$(cat lo-src/.slimlo-config-hash)" = "$CONFIG_HASH" ] && \
        [ -f "lo-src/config_host.mk" ]; then \
@@ -140,6 +142,7 @@ RUN --mount=type=cache,target=/build/lo-src \
         rm -f lo-src/workdir/LinkTarget/Library/libmergedlo.so 2>/dev/null || true && \
         echo "$CONFIG_HASH" > lo-src/.slimlo-config-hash; \
     fi && \
+    SLIMLO_DEP_STEP="$SLIMLO_DEP_STEP" ./scripts/assert-config-features.sh lo-src/config_host.mk linux && \
     # --- Build ---
     cd lo-src && make -j${NPROC} && \
     cd /build && \
