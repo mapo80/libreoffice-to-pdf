@@ -612,5 +612,93 @@ changes += toggle_once(
     "S06 vcl lcms2 guard",
 )
 
+changes += toggle_once(
+    root / "vcl/Library_vcl.mk",
+    "$(eval $(call gb_Library_add_defs,vcl,\\\n"
+    "    -DVCL_DLLIMPLEMENTATION \\\n"
+    "    -DDLLIMPLEMENTATION_UITEST \\\n"
+    "    -DCUI_DLL_NAME=\\\"$(call gb_Library_get_runtime_filename,$(call gb_Library__get_name,cui))\\\" \\\n"
+    "    -DTK_DLL_NAME=\\\"$(call gb_Library_get_runtime_filename,$(call gb_Library__get_name,tk))\\\" \\\n"
+    "    $(if $(SYSTEM_LIBFIXMATH),-DSYSTEM_LIBFIXMATH) \\\n"
+    "))\n",
+    "$(eval $(call gb_Library_add_defs,vcl,\\\n"
+    "    -DVCL_DLLIMPLEMENTATION \\\n"
+    "    -DDLLIMPLEMENTATION_UITEST \\\n"
+    "    -DCUI_DLL_NAME=\\\"$(call gb_Library_get_runtime_filename,$(call gb_Library__get_name,cui))\\\" \\\n"
+    "    -DTK_DLL_NAME=\\\"$(call gb_Library_get_runtime_filename,$(call gb_Library__get_name,tk))\\\" \\\n"
+    "    $(if $(SYSTEM_LIBFIXMATH),-DSYSTEM_LIBFIXMATH) \\\n"
+    "    $(if $(ENABLE_SLIMLO),-DENABLE_SLIMLO_NO_LCMS2=1) \\\n"
+    "))\n",
+    dep_step >= 6,
+    "S06 vcl add no-lcms2 define",
+)
+
+changes += toggle_once(
+    root / "vcl/source/gdi/pdfwriter_impl.cxx",
+    "#include <lcms2.h>\n",
+    "#if !defined(ENABLE_SLIMLO_NO_LCMS2)\n"
+    "#include <lcms2.h>\n"
+    "#endif\n",
+    dep_step >= 6,
+    "S06 pdfwriter_impl guard lcms2 include",
+)
+
+# Normalize legacy S06 variant that injected an early-return block
+# without fully preprocessor-guarding downstream cms* symbol usage.
+changes += toggle_once(
+    root / "vcl/source/gdi/pdfwriter_impl.cxx",
+    "sal_Int32 PDFWriterImpl::emitOutputIntent()\n"
+    "{\n"
+    "    if (m_nPDFA_Version == 0) // not PDFA\n"
+    "        return 0;\n"
+    "\n"
+    "    //emit the sRGB standard profile, in ICC format, in a stream, per IEC61966-2.1\n",
+    "sal_Int32 PDFWriterImpl::emitOutputIntent()\n"
+    "{\n"
+    "    if (m_nPDFA_Version == 0) // not PDFA\n"
+    "        return 0;\n"
+    "#if defined(ENABLE_SLIMLO_NO_LCMS2)\n"
+    "    // SlimLO S06: no lcms2, skip ICC output intent generation.\n"
+    "    return 0;\n"
+    "#endif\n"
+    "\n"
+    "    //emit the sRGB standard profile, in ICC format, in a stream, per IEC61966-2.1\n",
+    False,
+    "S06 normalize legacy early-return block",
+)
+
+changes += toggle_once(
+    root / "vcl/source/gdi/pdfwriter_impl.cxx",
+    "sal_Int32 PDFWriterImpl::emitOutputIntent()\n"
+    "{\n"
+    "    if (m_nPDFA_Version == 0) // not PDFA\n"
+    "        return 0;\n",
+    "sal_Int32 PDFWriterImpl::emitOutputIntent()\n"
+    "{\n"
+    "    if (m_nPDFA_Version == 0) // not PDFA\n"
+    "        return 0;\n"
+    "#if !defined(ENABLE_SLIMLO_NO_LCMS2)\n",
+    dep_step >= 6,
+    "S06 pdfwriter_impl guard output intent body",
+)
+
+changes += toggle_once(
+    root / "vcl/source/gdi/pdfwriter_impl.cxx",
+    "    if ( !writeBuffer( aLine ) ) return 0;\n"
+    "\n"
+    "    return nOIObject;\n"
+    "}\n",
+    "    if ( !writeBuffer( aLine ) ) return 0;\n"
+    "\n"
+    "    return nOIObject;\n"
+    "#else\n"
+    "    // SlimLO S06: no lcms2, skip ICC output intent generation.\n"
+    "    return 0;\n"
+    "#endif\n"
+    "}\n",
+    dep_step >= 6,
+    "S06 pdfwriter_impl add no-lcms2 fallback branch",
+)
+
 print(f"    Patch 027 complete (SLIMLO_DEP_STEP={dep_step}, changed_blocks={changes})")
 PY
