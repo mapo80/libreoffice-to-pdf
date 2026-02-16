@@ -7,6 +7,7 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 ARTIFACT_DIR="${1:-$PROJECT_DIR/output}"
 ALLOWLIST_FILE="${2:-}"
+EXTRA_ALLOWLIST="${DEPS_ALLOWLIST_EXTRA:-}"
 
 if [ ! -d "$ARTIFACT_DIR/program" ]; then
     echo "ERROR: artifact dir must contain program/: $ARTIFACT_DIR"
@@ -47,6 +48,13 @@ awk '
         if (line != "") print line
     }
 ' "$ALLOWLIST_FILE" > "$TMP_ALLOWED"
+
+if [ -n "$EXTRA_ALLOWLIST" ]; then
+    # Accept comma/newline-separated extra patterns injected by callers.
+    printf '%s\n' "$EXTRA_ALLOWLIST" \
+        | tr ',' '\n' \
+        | awk '{gsub(/^[ \t]+|[ \t]+$/, ""); if ($0 != "") print}' >> "$TMP_ALLOWED"
+fi
 
 gather_macos_deps() {
     local program="$1"

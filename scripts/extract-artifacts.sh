@@ -169,6 +169,10 @@ fi
 if [ -d "$INSTDIR/$SHARE_FOLDER/fonts" ]; then
     cp -a "$INSTDIR/$SHARE_FOLDER/fonts" "$OUTPUT_DIR/share/"
 fi
+# Language tag registry data (required by i18nlangtag/liblangtag runtime lookups)
+if [ -d "$INSTDIR/$SHARE_FOLDER/liblangtag" ]; then
+    cp -a "$INSTDIR/$SHARE_FOLDER/liblangtag" "$OUTPUT_DIR/share/"
+fi
 # Presets directory (required for user profile initialization)
 # LOKit's userinstall::create() copies BRAND_BASE_DIR/presets to user profile.
 # On Linux: LIBO_SHARE_PRESETS_FOLDER="presets" relative to install root.
@@ -198,7 +202,7 @@ case "$(uname -s)" in
         # fundamentalrc uses BRAND_BASE_DIR/Resources/registry, BRAND_BASE_DIR/Resources/config etc.
         # Since Resources → program, these resolve to program/registry, program/config etc.
         # But our data is in share/. Create symlinks inside program/ to share/ subdirs.
-        for subdir in registry filter config palette fonts; do
+        for subdir in registry filter config palette fonts liblangtag; do
             if [ -d "$OUTPUT_DIR/share/$subdir" ]; then
                 ln -sfn "../share/$subdir" "$OUTPUT_DIR/program/$subdir"
             fi

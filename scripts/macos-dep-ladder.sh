@@ -14,13 +14,24 @@ LO_SRC_DIR="${LO_SRC_DIR:-$PROJECT_DIR/lo-src}"
 OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_DIR/output-dep-ladder}"
 ARTIFACT_ROOT="${ARTIFACT_ROOT:-$PROJECT_DIR/artifacts/dep-ladder}"
 NPROC="${NPROC:-$(sysctl -n hw.ncpu 2>/dev/null || echo 8)}"
-RUN_LINUX_VALIDATE="${RUN_LINUX_VALIDATE:-1}"
+RUN_LINUX_VALIDATE="${RUN_LINUX_VALIDATE:-0}"
+BASELINE_STEP="${BASELINE_STEP:-2}"
+LADDER_STEPS="${LADDER_STEPS:-3 4 5 6}"
 REQUIRED_FINAL_STEP="${REQUIRED_FINAL_STEP:-0}"
+REUSE_BASELINE="${REUSE_BASELINE:-0}"
 
 case "$RUN_LINUX_VALIDATE" in
     0|1) ;;
     *)
         echo "ERROR: RUN_LINUX_VALIDATE must be 0 or 1 (got '$RUN_LINUX_VALIDATE')"
+        exit 1
+        ;;
+esac
+
+case "$REUSE_BASELINE" in
+    0|1) ;;
+    *)
+        echo "ERROR: REUSE_BASELINE must be 0 or 1 (got '$REUSE_BASELINE')"
         exit 1
         ;;
 esac
@@ -32,7 +43,26 @@ case "$REQUIRED_FINAL_STEP" in
         ;;
 esac
 
-declare -a STEPS=(1 2 3 4 5 6)
+case "$BASELINE_STEP" in
+    ''|*[!0-9]*)
+        echo "ERROR: BASELINE_STEP must be an integer >= 0 (got '$BASELINE_STEP')"
+        exit 1
+        ;;
+esac
+
+read -r -a STEPS <<< "$LADDER_STEPS"
+if [ "${#STEPS[@]}" -eq 0 ]; then
+    echo "ERROR: LADDER_STEPS cannot be empty"
+    exit 1
+fi
+for s in "${STEPS[@]}"; do
+    case "$s" in
+        ''|*[!0-9]*)
+            echo "ERROR: LADDER_STEPS must contain only integers >= 0 (got '$s')"
+            exit 1
+            ;;
+    esac
+done
 
 step_name() {
     case "$1" in
@@ -101,7 +131,7 @@ run_step() {
     mkdir -p "$step_dir"
 
     echo ">>> Building step S$(printf '%02d' "$step"): $(step_name "$step")"
-    (
+    if ! (
         cd "$PROJECT_DIR"
         NPROC="$NPROC" \
         LO_SRC_DIR="$LO_SRC_DIR" \
@@ -110,16 +140,22 @@ run_step() {
         CLEAN_BUILD=1 \
         SLIMLO_DEP_STEP="$step" \
         ./scripts/build.sh
-    )
+    ); then
+        return 1
+    fi
 
     echo ">>> Running gate for S$(printf '%02d' "$step")"
-    (
+    if ! (
         cd "$PROJECT_DIR"
         GATE_ENABLE_DOTNET=auto ./scripts/run-gate.sh "$OUTPUT_DIR"
-    ) | tee "$gate_log"
+    ) | tee "$gate_log"; then
+        return 1
+    fi
 
     echo ">>> Measuring artifact for S$(printf '%02d' "$step")"
-    "$PROJECT_DIR/scripts/measure-artifact.sh" "$OUTPUT_DIR" "$step_dir/size-report.json" "$step_dir/size-report.txt"
+    if ! "$PROJECT_DIR/scripts/measure-artifact.sh" "$OUTPUT_DIR" "$step_dir/size-report.json" "$step_dir/size-report.txt"; then
+        return 1
+    fi
 
     local -a dep_args=()
     local p
@@ -128,10 +164,12 @@ run_step() {
     done
 
     echo ">>> Checking merged direct dependencies for S$(printf '%02d' "$step")"
-    "$PROJECT_DIR/scripts/assert-merged-deps.sh" \
+    if ! "$PROJECT_DIR/scripts/assert-merged-deps.sh" \
         "$OUTPUT_DIR" \
         --write "$step_dir/merged-deps.txt" \
-        "${dep_args[@]}"
+        "${dep_args[@]}"; then
+        return 1
+    fi
 
     if [ -f "$OUTPUT_DIR/build-metadata.json" ]; then
         cp "$OUTPUT_DIR/build-metadata.json" "$step_dir/build-metadata.json"
@@ -139,12 +177,14 @@ run_step() {
 
     if [ "$RUN_LINUX_VALIDATE" = "1" ]; then
         echo ">>> Linux Docker validation for S$(printf '%02d' "$step")"
-        (
+        if ! (
             cd "$PROJECT_DIR"
             SLIMLO_DEP_STEP="$step" \
             OUTPUT_SUBDIR="output-linux-dep-ladder-s$(printf '%02d' "$step")" \
             ./scripts/linux-docker-validate.sh
-        ) | tee "$step_dir/linux-validate.log"
+        ) | tee "$step_dir/linux-validate.log"; then
+            return 1
+        fi
     fi
 }
 
@@ -158,45 +198,54 @@ echo "OUTPUT_DIR:          $OUTPUT_DIR"
 echo "ARTIFACT_ROOT:       $ARTIFACT_ROOT"
 echo "NPROC:               $NPROC"
 echo "RUN_LINUX_VALIDATE:  $RUN_LINUX_VALIDATE"
+echo "BASELINE_STEP:       $BASELINE_STEP"
+echo "LADDER_STEPS:        ${STEPS[*]}"
+echo "REUSE_BASELINE:      $REUSE_BASELINE"
 echo "REQUIRED_FINAL_STEP: $REQUIRED_FINAL_STEP"
 echo ""
 
-# Baseline S00
-S00_DIR="$ARTIFACT_ROOT/S00-baseline"
+# Baseline (defaults to S02)
+S00_DIR="$ARTIFACT_ROOT/S$(printf '%02d' "$BASELINE_STEP")-baseline"
 mkdir -p "$S00_DIR"
-echo ">>> Building baseline S00"
-(
-    cd "$PROJECT_DIR"
-    NPROC="$NPROC" \
-    LO_SRC_DIR="$LO_SRC_DIR" \
-    OUTPUT_DIR="$OUTPUT_DIR" \
-    DOCX_AGGRESSIVE=1 \
-    CLEAN_BUILD=1 \
-    SLIMLO_DEP_STEP=0 \
-    ./scripts/build.sh
-)
-(
-    cd "$PROJECT_DIR"
-    GATE_ENABLE_DOTNET=auto ./scripts/run-gate.sh "$OUTPUT_DIR"
-) | tee "$S00_DIR/gate.log"
-"$PROJECT_DIR/scripts/measure-artifact.sh" "$OUTPUT_DIR" "$S00_DIR/size-report.json" "$S00_DIR/size-report.txt"
-"$PROJECT_DIR/scripts/assert-merged-deps.sh" "$OUTPUT_DIR" --write "$S00_DIR/merged-deps.txt"
-if [ -f "$OUTPUT_DIR/build-metadata.json" ]; then
-    cp "$OUTPUT_DIR/build-metadata.json" "$S00_DIR/build-metadata.json"
+if [ "$REUSE_BASELINE" = "1" ] && [ -f "$S00_DIR/size-report.json" ] && [ -f "$S00_DIR/gate.log" ]; then
+    echo ">>> Reusing existing baseline S$(printf '%02d' "$BASELINE_STEP") from $S00_DIR"
+else
+    echo ">>> Building baseline S$(printf '%02d' "$BASELINE_STEP")"
+    (
+        cd "$PROJECT_DIR"
+        NPROC="$NPROC" \
+        LO_SRC_DIR="$LO_SRC_DIR" \
+        OUTPUT_DIR="$OUTPUT_DIR" \
+        DOCX_AGGRESSIVE=1 \
+        CLEAN_BUILD=1 \
+        SLIMLO_DEP_STEP="$BASELINE_STEP" \
+        ./scripts/build.sh
+    )
+    (
+        cd "$PROJECT_DIR"
+        GATE_ENABLE_DOTNET=auto ./scripts/run-gate.sh "$OUTPUT_DIR"
+    ) | tee "$S00_DIR/gate.log"
+    "$PROJECT_DIR/scripts/measure-artifact.sh" "$OUTPUT_DIR" "$S00_DIR/size-report.json" "$S00_DIR/size-report.txt"
+    "$PROJECT_DIR/scripts/assert-merged-deps.sh" "$OUTPUT_DIR" --write "$S00_DIR/merged-deps.txt"
+    if [ -f "$OUTPUT_DIR/build-metadata.json" ]; then
+        cp "$OUTPUT_DIR/build-metadata.json" "$S00_DIR/build-metadata.json"
+    fi
 fi
 
 BASELINE_TOTAL_MB="$(extract_total_mb "$S00_DIR/size-report.json")"
 BASELINE_MERGED_MB="$(merged_mb "$OUTPUT_DIR")"
-printf "0\tbaseline\tpassed\tok\t%s\t%s\t%s\n" \
+printf "%s\tbaseline\taccepted\tok\t%s\t%s\t%s\n" \
+    "$BASELINE_STEP" \
     "$BASELINE_TOTAL_MB" "$BASELINE_MERGED_MB" "$S00_DIR" >> "$RESULTS_TSV"
 
-BEST_STEP=0
+BEST_STEP="$BASELINE_STEP"
 BEST_DIR="$S00_DIR"
+BEST_TOTAL_MB="$BASELINE_TOTAL_MB"
 
 for step in "${STEPS[@]}"; do
     name="$(step_name "$step")"
     step_dir="$ARTIFACT_ROOT/S$(printf '%02d' "$step")-$name"
-    status="passed"
+    status="accepted"
     reason="ok"
 
     set +e
@@ -205,7 +254,7 @@ for step in "${STEPS[@]}"; do
     set -e
 
     if [ "$rc" -ne 0 ]; then
-        status="failed"
+        status="rejected"
         reason="step_failed_rc_$rc"
         step_total="0.0"
         step_merged="0.0"
@@ -230,8 +279,8 @@ with open(out, "w", encoding="utf-8") as f:
     json.dump(doc, f, indent=2, sort_keys=True)
     f.write("\n")
 PY
-        echo "STOP: step S$(printf '%02d' "$step") failed; keeping best accepted step S$(printf '%02d' "$BEST_STEP")."
-        break
+        echo "REJECTED: step S$(printf '%02d' "$step") failed; continuing with next step."
+        continue
     fi
 
     step_total="$(extract_total_mb "$step_dir/size-report.json")"
@@ -262,8 +311,17 @@ with open(out, "w", encoding="utf-8") as f:
     f.write("\n")
 PY
 
-    BEST_STEP="$step"
-    BEST_DIR="$step_dir"
+    if python3 - "$step_total" "$BEST_TOTAL_MB" <<'PY'
+import sys
+step_total = float(sys.argv[1])
+best_total = float(sys.argv[2])
+sys.exit(0 if step_total < best_total else 1)
+PY
+    then
+        BEST_STEP="$step"
+        BEST_DIR="$step_dir"
+        BEST_TOTAL_MB="$step_total"
+    fi
 done
 
 python3 - "$RESULTS_TSV" "$ARTIFACT_ROOT/final-report.json" "$BEST_STEP" "$BEST_DIR" <<'PY'
@@ -303,6 +361,7 @@ echo ""
 echo "Wrote final report: $ARTIFACT_ROOT/final-report.json"
 echo "Best accepted step: S$(printf '%02d' "$BEST_STEP")"
 echo "Best artifact dir:  $BEST_DIR"
+echo "Best total size MB: $BEST_TOTAL_MB"
 
 if [ "$BEST_STEP" -lt "$REQUIRED_FINAL_STEP" ]; then
     echo "FAIL: best step S$(printf '%02d' "$BEST_STEP") is below REQUIRED_FINAL_STEP=$REQUIRED_FINAL_STEP"
