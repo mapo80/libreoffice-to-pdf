@@ -23,6 +23,8 @@ GATE_TIMEOUT_DOTNET="${GATE_TIMEOUT_DOTNET:-480}"
 GATE_ENABLE_DOTNET="${GATE_ENABLE_DOTNET:-auto}"   # auto|0|1
 GATE_DOTNET_FRAMEWORK="${GATE_DOTNET_FRAMEWORK:-net8.0}"
 GATE_DOTNET_FILTER="${GATE_DOTNET_FILTER:-FullyQualifiedName~PdfConverterIntegrationTests.ConvertAsync_ValidDocx_ProducesPdf|FullyQualifiedName~PdfConverterIntegrationTests.ConvertAsync_BufferValidDocx_ReturnsPdfBytes|FullyQualifiedName~PdfConverterStreamIntegrationTests.ConvertAsync_StreamToStream_ValidDocx_ProducesPdf|FullyQualifiedName~PdfConverterStreamIntegrationTests.ConvertAsync_ConcurrentStreamToStream_AllSucceed|FullyQualifiedName~PdfConverterIntegrationTests.ConvertAsync_BufferUnsupportedFormat_ReturnsFailure|FullyQualifiedName~PdfConverterStreamValidationTests.ConvertAsync_StreamToStream_UnsupportedFormat_ReturnsFailure|FullyQualifiedName~PdfConverterStreamValidationTests.ConvertAsync_StreamToFile_UnsupportedFormat_ReturnsFailure}"
+GATE_STRICT_WARNINGS="${GATE_STRICT_WARNINGS:-1}"   # 0|1
+GATE_STRICT_WARNING_PATTERNS="${GATE_STRICT_WARNING_PATTERNS:-language-subtag-registry.xml}"
 
 run_with_timeout() {
     local seconds="$1"
@@ -82,20 +84,60 @@ cleanup_orphans() {
     pkill -f '/tmp/slimlo_test_convert' 2>/dev/null || true
 }
 
-trap cleanup_orphans EXIT
+check_strict_warnings() {
+    local log_path="$1"
+    local context="$2"
+    local hit=0
+
+    if [ "$GATE_STRICT_WARNINGS" = "0" ]; then
+        return 0
+    fi
+
+    local old_ifs="$IFS"
+    IFS=';'
+    for pattern in $GATE_STRICT_WARNING_PATTERNS; do
+        [ -z "$pattern" ] && continue
+        if grep -Fq "$pattern" "$log_path"; then
+            if [ "$hit" -eq 0 ]; then
+                echo "FAIL: strict warning gate matched in $context"
+            fi
+            echo "  pattern: $pattern"
+            grep -Fn "$pattern" "$log_path" | head -n 5 | sed 's/^/  /'
+            hit=1
+        fi
+    done
+    IFS="$old_ifs"
+
+    if [ "$hit" -ne 0 ]; then
+        return 1
+    fi
+    return 0
+}
+
+TMP_C_LOG=""
+TMP_DOTNET_LOG=""
+cleanup_all() {
+    cleanup_orphans
+    [ -n "$TMP_C_LOG" ] && rm -f "$TMP_C_LOG" || true
+    [ -n "$TMP_DOTNET_LOG" ] && rm -f "$TMP_DOTNET_LOG" || true
+}
+
+trap cleanup_all EXIT
 
 echo "=== SlimLO Gate ==="
 echo "Artifact: $ARTIFACT_DIR"
 echo "C timeout: ${GATE_TIMEOUT_C}s"
 echo "Dotnet timeout: ${GATE_TIMEOUT_DOTNET}s"
+echo "Strict warnings: ${GATE_STRICT_WARNINGS} (${GATE_STRICT_WARNING_PATTERNS})"
 
 # Best-effort cleanup from previous interrupted probes before starting.
 cleanup_orphans
 
 echo "[1/2] C smoke gate (tests/test.sh)"
+TMP_C_LOG="$(mktemp "${TMPDIR:-/tmp}/slimlo-gate-c.XXXXXX.log")"
 set +e
-run_with_timeout "$GATE_TIMEOUT_C" env SLIMLO_DIR="$ARTIFACT_DIR" "$PROJECT_DIR/tests/test.sh"
-RC_C=$?
+run_with_timeout "$GATE_TIMEOUT_C" env SLIMLO_DIR="$ARTIFACT_DIR" "$PROJECT_DIR/tests/test.sh" 2>&1 | tee "$TMP_C_LOG"
+RC_C=${PIPESTATUS[0]}
 set -e
 if [ "$RC_C" -eq 124 ]; then
     echo "FAIL: C smoke gate timed out after ${GATE_TIMEOUT_C}s"
@@ -104,6 +146,9 @@ fi
 if [ "$RC_C" -ne 0 ]; then
     echo "FAIL: C smoke gate failed (exit $RC_C)"
     exit "$RC_C"
+fi
+if ! check_strict_warnings "$TMP_C_LOG" "C smoke gate"; then
+    exit 1
 fi
 echo "PASS: C smoke gate"
 
@@ -149,6 +194,7 @@ if [ "$ENABLE_DOTNET" -eq 1 ]; then
     fi
 
     echo "[2/2] .NET gate ($GATE_DOTNET_FRAMEWORK)"
+    TMP_DOTNET_LOG="$(mktemp "${TMPDIR:-/tmp}/slimlo-gate-dotnet.XXXXXX.log")"
     set +e
     (
         cd "$PROJECT_DIR/dotnet"
@@ -161,8 +207,8 @@ if [ "$ENABLE_DOTNET" -eq 1 ]; then
                     --verbosity quiet \
                     -f "$GATE_DOTNET_FRAMEWORK" \
                     --filter "$GATE_DOTNET_FILTER"
-    )
-    RC_DOTNET=$?
+    ) 2>&1 | tee "$TMP_DOTNET_LOG"
+    RC_DOTNET=${PIPESTATUS[0]}
     set -e
     if [ "$RC_DOTNET" -eq 124 ]; then
         echo "FAIL: .NET gate timed out after ${GATE_TIMEOUT_DOTNET}s"
@@ -171,6 +217,9 @@ if [ "$ENABLE_DOTNET" -eq 1 ]; then
     if [ "$RC_DOTNET" -ne 0 ]; then
         echo "FAIL: .NET gate failed (exit $RC_DOTNET)"
         exit "$RC_DOTNET"
+    fi
+    if ! check_strict_warnings "$TMP_DOTNET_LOG" ".NET gate"; then
+        exit 1
     fi
     echo "PASS: .NET gate"
 else

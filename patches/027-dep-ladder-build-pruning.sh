@@ -483,12 +483,14 @@ changes += toggle_once(
     "S03 pre_MergedLibsList unordf guard",
 )
 
+# Always normalize legacy S03 edit that removed unordf from Repository.mk,
+# because that breaks unoxml/Library_unordf registration checks.
 changes += toggle_once(
     root / "Repository.mk",
     "\tunordf \\\n",
     "\t$(if $(ENABLE_SLIMLO),,unordf) \\\n",
-    dep_step >= 3,
-    "S03 Repository unordf guard",
+    False,
+    "S03 normalize legacy Repository unordf guard",
 )
 
 # S04 (xmlsecurity/xsec) is intentionally not baseline-enforced.
