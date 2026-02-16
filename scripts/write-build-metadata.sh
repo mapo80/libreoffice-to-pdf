@@ -96,6 +96,7 @@ git_dirty = cmd_version(["git", "status", "--porcelain"]) != ""
 
 metadata = {
     "profile": "docx-aggressive",
+    "dep_step": int(os.environ.get("SLIMLO_DEP_STEP", "0")) if os.environ.get("SLIMLO_DEP_STEP", "0").isdigit() else os.environ.get("SLIMLO_DEP_STEP", "0"),
     "generated_at_utc": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
     "project_dir": project_dir,
     "output_file": output_file,

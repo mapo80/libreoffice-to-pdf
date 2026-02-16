@@ -723,6 +723,10 @@ int main() {
 **Prerequisites:** Docker with BuildKit, 16 GB+ RAM allocated.
 
 ```bash
+# Recommended: full local Linux validation (build + gates + reports)
+./scripts/linux-docker-validate.sh
+
+# Or manual image build + artifact extraction:
 DOCKER_BUILDKIT=1 docker build \
   -f docker/Dockerfile.linux-x64 \
   --build-arg SCRIPTS_HASH=$(cat scripts/*.sh patches/*.sh patches/*.postautogen | sha256sum | cut -d' ' -f1) \
@@ -745,6 +749,21 @@ docker run --rm -v $(pwd)/output:/output slimlo-build
 | `NPROC` | auto-detected | Build parallelism (`-jN`) |
 | `DOCX_AGGRESSIVE` | `1` | Always-aggressive profile (`1` only; `0` is rejected) |
 
+### Official Phase 2 flow
+
+Use macOS for fast profile discovery, Linux via Docker for local compatibility validation, and Windows with a manual signoff checklist:
+
+```bash
+# 1) macOS discovery matrix (fixed profiles, auto-select smallest passing profile)
+./scripts/macos-ultra-matrix.sh
+
+# 2) Linux validation in Docker (build + run-gate + deps gate + reports)
+./scripts/linux-docker-validate.sh
+
+# 3) Prepare Windows handoff package (commit/branch + commands + checklist)
+./scripts/prepare-windows-handoff.sh
+```
+
 ### Build profile
 
 ```bash
@@ -754,6 +773,8 @@ DOCX_AGGRESSIVE=1 ./scripts/build.sh
 # Equivalent (default)
 ./scripts/build.sh
 ```
+
+`build.sh` now enforces a post-configure hard gate via `scripts/assert-config-features.sh`. The build fails immediately if `config_host.mk` is not truly slim (for example `ENABLE_NSS=TRUE`, `ENABLE_CURL=TRUE`, `TLS=NSS`, or forbidden `BUILD_TYPE` tokens).
 
 ### Probe aggressive candidates
 
@@ -778,8 +799,11 @@ Related scripts:
 - `scripts/write-build-metadata.sh`
 - `scripts/measure-artifact.sh`
 - `scripts/check-deps-allowlist.sh`
+- `scripts/assert-config-features.sh`
 - `scripts/run-gate.sh`
 - `scripts/macos-ultra-matrix.sh`
+- `scripts/linux-docker-validate.sh`
+- `scripts/prepare-windows-handoff.sh`
 
 **Linux prerequisites:**
 
@@ -828,6 +852,7 @@ Local Windows builds use a set of scripts that handle MSVC toolchain discovery, 
 | `scripts/setup-windows-msys2.sh` | Installs MSYS2 packages, creates `pkgconf` and `wslpath` shims. Run once inside MSYS2 MSYS shell. | `./scripts/setup-windows-msys2.sh` |
 | `scripts/windows-build.sh` | Build wrapper called by the launchers. Auto-detects MSVC `cl.exe`, Windows Python, NASM, and target architecture. | Called automatically; can also run directly from MSYS2 after `vcvarsall`. |
 | `scripts/windows-debug-harfbuzz.sh` | Diagnostic tool for the most common build failure (HarfBuzz Meson). Dumps compiler paths, cross-file, and environment. | `./scripts/windows-debug-harfbuzz.sh` |
+| `scripts/prepare-windows-handoff.sh` | Generates a reproducible validation handoff package (`branch`, `commit`, commands, checklist). | `./scripts/prepare-windows-handoff.sh` |
 | `patches/021-support-vs2026.sh` | Adds Visual Studio 2026 (v18.x, toolset v145) support to LibreOffice's `configure.ac`. | Applied automatically by `build.sh`. |
 | `patches/022-fix-external-patch-line-endings.sh` | Converts CRLF patch files to LF. Required because MSVC builds use `--binary` patch mode. | Applied automatically by `build.sh`. |
 | `distro-configs/SlimLO-windows.conf` | Windows-specific `configure` flags (MSVC, static externals, disabled GUI). | Selected automatically by `build.sh` on Windows. |
@@ -836,6 +861,17 @@ Local Windows builds use a set of scripts that handle MSVC toolchain discovery, 
 > - MSYS2 runs under x64 Prism emulation on ARM64 Windows, so `vcvarsall` always uses `x64`. The produced binaries are x64 and run on ARM64 via emulation.
 > - `SKIP_CONFIGURE=1` (or `-SkipConfigure`) skips clone, patching, and configure steps — useful for incremental rebuilds after fixing a build error.
 > - HarfBuzz Meson is the most common failure point. Use `windows-debug-harfbuzz.sh` for diagnostics.
+
+For manual Windows release signoff, generate a handoff package:
+
+```bash
+./scripts/prepare-windows-handoff.sh
+```
+
+This creates:
+
+- `artifacts/windows-handoff/windows-handoff.json`
+- `artifacts/windows-handoff/WINDOWS-HANDOFF.md`
 
 ### Output layout
 
@@ -872,6 +908,16 @@ SLIMLO_TEST_MODE=docker ./tests/test.sh
 # Custom artifact directory
 SLIMLO_DIR=/path/to/artifacts ./tests/test.sh
 ```
+
+### Linux Docker validation output
+
+`./scripts/linux-docker-validate.sh` writes Linux validation artifacts to `output-linux-docker/`:
+
+- `build-metadata.json`
+- `size-report.json`
+- `size-report.txt`
+- `gate-linux.log`
+- `deps-gate-linux.log`
 
 ---
 
@@ -1059,6 +1105,10 @@ apk add --no-cache \
 │   ├── build.sh                   # Cross-platform build pipeline
 │   ├── apply-patches.sh           # Runs all patches in order
 │   ├── extract-artifacts.sh       # Artifact extraction + pruning
+│   ├── assert-config-features.sh  # Post-configure hard gate (feature truth)
+│   ├── macos-ultra-matrix.sh      # macOS discovery matrix (profile auto-selection)
+│   ├── linux-docker-validate.sh   # Linux validation via Docker (gate + deps + reports)
+│   ├── prepare-windows-handoff.sh # Windows manual signoff package generator
 │   ├── docker-build.sh            # Docker build orchestrator
 │   ├── pack-nuget.sh              # NuGet packaging
 │   ├── pack-maven.sh              # Maven packaging
@@ -1119,6 +1169,12 @@ apk add --no-cache \
 
 All pipelines trigger on `pull_request` to `main` and `workflow_dispatch`.
 Each pipeline always uploads build reports (`build-metadata.json`, `size-report.json`, `size-report.txt`) in a dedicated artifact, in addition to the runtime artifact.
+
+Release signoff policy for Phase 2:
+
+- macOS: profile discovery (`macos-ultra-matrix.sh`)
+- Linux: local compatibility validation via Docker (`linux-docker-validate.sh`)
+- Windows: manual validation using generated handoff checklist (`prepare-windows-handoff.sh`)
 
 | Workflow | Runner | Build method | Timeout |
 |----------|--------|-------------|---------|

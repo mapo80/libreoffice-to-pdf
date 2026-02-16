@@ -46,6 +46,7 @@ SLIMLO_BLOCK='# SlimLO: minimal headless PDF conversion build.\
 # Disables everything not needed for OOXML -> PDF conversion.\
 if test "$enable_slimlo" = "yes"; then\
     enable_avmedia=no\
+    enable_breakpad=no\
     enable_curl=no\
     enable_libcmis=no\
     enable_coinmp=no\
@@ -62,6 +63,7 @@ if test "$enable_slimlo" = "yes"; then\
     enable_lotuswordpro=no\
     enable_lpsolve=no\
     enable_nss=no\
+    enable_openssl=no\
     enable_odk=no\
     enable_online_update=no\
     enable_opencl=no\
@@ -76,11 +78,20 @@ if test "$enable_slimlo" = "yes"; then\
     enable_zxing=no\
     test_libepubgen=no\
     test_libcmis=no\
-    with_tls=openssl\
+    with_webdav=no\
+    with_tls=no\
     with_galleries=no\
     with_gssapi=no\
     with_templates=no\
     with_x=no\
+    test_libcdr=no\
+    test_libetonyek=no\
+    test_libfreehand=no\
+    test_libmspub=no\
+    test_libpagemaker=no\
+    test_libqxp=no\
+    test_libvisio=no\
+    test_libzmf=no\
 \
     ENABLE_SLIMLO=TRUE\
 fi\
