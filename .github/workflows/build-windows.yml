@@ -231,7 +231,7 @@ jobs:
           if-no-files-found: warn
 
       - uses: actions/upload-artifact@v4
-        if: success()
+        if: ${{ !cancelled() }}
         with:
           name: slimlo-win-x64
           path: output/
