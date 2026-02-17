@@ -5,7 +5,10 @@ param(
     [switch]$SetupOnly,
     [switch]$BuildOnly,
     [switch]$SkipConfigure,
-    [int]$Parallelism = 0
+    [int]$Parallelism = 0,
+    [switch]$Aggressive,
+    [ValidateSet("", "x64", "arm64")]
+    [string]$Arch = ""
 )
 
 Write-Host "============================================" -ForegroundColor Cyan
@@ -102,11 +105,14 @@ if (-not $SetupOnly -and -not $env:INCLUDE) {
     $vswhere = "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
     $vsPath = & $vswhere -products * -latest -property installationPath 2>$null
     if ($vsPath) {
-        # MSYS2 (even on ARM64 Windows) runs under x64 emulation,
-        # so uname -m reports x86_64 and LO configure detects x86_64.
-        # We must use vcvarsall x64 to match, producing an x64 build
-        # that runs on ARM64 via Windows Prism emulation.
-        $vcvarsArch = "x64"
+        # Choose vcvarsall architecture based on -Arch parameter.
+        # Default: x64 (native x64 build).
+        # arm64: cross-compile from x64 host to ARM64 target.
+        if ($Arch -eq "arm64") {
+            $vcvarsArch = "x64_arm64"
+        } else {
+            $vcvarsArch = "x64"
+        }
         $vcvarsall = Join-Path $vsPath "VC\Auxiliary\Build\vcvarsall.bat"
         if (Test-Path $vcvarsall) {
             # Run vcvarsall.bat and capture env vars
@@ -135,6 +141,12 @@ if (-not $SetupOnly -and -not $env:INCLUDE) {
         Write-Host "WARNING: Visual Studio not found via vswhere" -ForegroundColor Yellow
     }
     Write-Host ""
+}
+
+# Set TARGET_ARCH for ARM64 cross-compilation so bash scripts know the target.
+if ($Arch -eq "arm64") {
+    $env:TARGET_ARCH = "aarch64"
+    Write-Host "Cross-compiling for ARM64 (TARGET_ARCH=aarch64)" -ForegroundColor Yellow
 }
 
 Write-Host "Launching MSYS2 MSYS shell..." -ForegroundColor Cyan
