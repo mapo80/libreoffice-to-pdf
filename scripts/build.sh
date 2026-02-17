@@ -36,6 +36,13 @@ case "$DOCX_AGGRESSIVE" in
         ;;
 esac
 
+# Auto-set ICU data filter for aggressive profile — reduces libicudata from ~31 MB to ~10 MB
+# by including only English locale data + minimal Unicode properties.
+if [ -z "${ICU_DATA_FILTER_FILE:-}" ] && [ -f "$PROJECT_DIR/icu-filter.json" ]; then
+    ICU_DATA_FILTER_FILE="$PROJECT_DIR/icu-filter.json"
+    export ICU_DATA_FILTER_FILE
+fi
+
 case "$CLEAN_BUILD" in
     0|1) ;;
     *)
@@ -121,6 +128,17 @@ if [ "$PLATFORM" = "windows" ] && [ -n "${ICU_DATA_FILTER_FILE:-}" ]; then
         echo "ERROR: ICU_DATA_FILTER_FILE not found: $ICU_DATA_FILTER_FILE"
         exit 1
     fi
+    echo "Using ICU_DATA_FILTER_FILE=$ICU_DATA_FILTER_FILE"
+fi
+
+# macOS / Linux: validate and absolutize ICU_DATA_FILTER_FILE
+if [ "$PLATFORM" != "windows" ] && [ -n "${ICU_DATA_FILTER_FILE:-}" ]; then
+    if [ ! -f "$ICU_DATA_FILTER_FILE" ]; then
+        echo "ERROR: ICU_DATA_FILTER_FILE not found: $ICU_DATA_FILTER_FILE"
+        exit 1
+    fi
+    ICU_DATA_FILTER_FILE="$(cd "$(dirname "$ICU_DATA_FILTER_FILE")" && pwd)/$(basename "$ICU_DATA_FILTER_FILE")"
+    export ICU_DATA_FILTER_FILE
     echo "Using ICU_DATA_FILTER_FILE=$ICU_DATA_FILTER_FILE"
 fi
 
