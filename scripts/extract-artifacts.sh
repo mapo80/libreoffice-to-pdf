@@ -288,6 +288,15 @@ done
 for extlib in "liblcms2*" "lcms2.dll"; do
     rm -f "$OUTPUT_DIR/program/"$extlib
 done
+# Liblangtag locale data — language-subtag-registry.xml (1.3 MB) + common/ (0.5 MB).
+# Warnings are non-fatal; DOCX→PDF conversion works without these BCP 47 data files.
+rm -rf "$OUTPUT_DIR/share/liblangtag"
+rm -f "$OUTPUT_DIR/program/liblangtag"
+# RDF/Redland stack — S07 guards all RDF-consuming code in merged lib.
+# libunordflo is the sole consumer; services.rdb cleaning handles component removal.
+for extlib in "librdf-lo*" "libraptor2-lo*" "librasqal-lo*" "libunordflo*"; do
+    rm -f "$OUTPUT_DIR/program/"$extlib
+done
 
 # -----------------------------------------------------------
 # 7c. Remove XCD config for unused modules
