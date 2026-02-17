@@ -589,9 +589,11 @@ if [ -x "$SCRIPT_DIR/check-deps-allowlist.sh" ]; then
     esac
     if [ -n "$DEPS_ALLOWLIST_EXTRA_STEP" ]; then
         DEPS_ALLOWLIST_EXTRA="$DEPS_ALLOWLIST_EXTRA_STEP" \
+        DEPS_FROM_JSON="$OUTPUT_DIR/size-report.json" \
             "$SCRIPT_DIR/check-deps-allowlist.sh" "$OUTPUT_DIR"
     else
-        "$SCRIPT_DIR/check-deps-allowlist.sh" "$OUTPUT_DIR"
+        DEPS_FROM_JSON="$OUTPUT_DIR/size-report.json" \
+            "$SCRIPT_DIR/check-deps-allowlist.sh" "$OUTPUT_DIR"
     fi
 else
     echo "    WARNING: check-deps-allowlist.sh not found/executable"
