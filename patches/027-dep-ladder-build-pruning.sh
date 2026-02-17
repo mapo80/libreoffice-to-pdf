@@ -15,10 +15,13 @@ esac
 
 python3 - "$LO_SRC" "$DEP_STEP" <<'PY'
 from pathlib import Path
-import sys
+import os, sys
 
 root = Path(sys.argv[1])
 dep_step = int(sys.argv[2])
+
+# Windows detection: MSYS2 python reports 'msys'/'cygwin', native python 'win32'.
+is_windows = os.name == 'nt' or sys.platform in ('msys', 'cygwin')
 
 
 def toggle_once(path: Path, old: str, new: str, enable: bool, label: str) -> bool:
@@ -524,6 +527,81 @@ changes += toggle_once(
     "    // SlimLO S02: OpenGLHelper removed to avoid epoxy dependency.\n",
     dep_step >= 2,
     "S02 salobj remove VCL_GL_INFO usage",
+)
+
+# S02: also disable OpenGL in vclplug_win (Windows VCL plugin).
+# vclplug_win has its own epoxy dependency and OpenGL context source that
+# must be guarded, plus salinst.cxx references to OpenGLContext::prepareForYield().
+changes += toggle_once(
+    root / "vcl/Library_vclplug_win.mk",
+    "$(eval $(call gb_Library_use_externals,vclplug_win,\\\n"
+    "    boost_headers \\\n"
+    "    epoxy \\\n"
+    "    harfbuzz \\\n",
+    "$(eval $(call gb_Library_use_externals,vclplug_win,\\\n"
+    "    boost_headers \\\n"
+    "    $(if $(ENABLE_SLIMLO),,epoxy) \\\n"
+    "    harfbuzz \\\n",
+    dep_step >= 2,
+    "S02 vclplug_win epoxy guard",
+)
+
+changes += toggle_once(
+    root / "vcl/Library_vclplug_win.mk",
+    "    vcl/source/opengl/win/context \\\n",
+    "    $(if $(ENABLE_SLIMLO),,vcl/source/opengl/win/context) \\\n",
+    dep_step >= 2,
+    "S02 vclplug_win OpenGL context source guard",
+)
+
+changes += toggle_once(
+    root / "vcl/win/app/salinst.cxx",
+    "#include <vcl/opengl/OpenGLContext.hxx>\n",
+    "#if HAVE_FEATURE_OPENGL\n#include <vcl/opengl/OpenGLContext.hxx>\n#endif\n",
+    dep_step >= 2,
+    "S02 win salinst guard OpenGL include",
+)
+
+changes += toggle_once(
+    root / "vcl/win/app/salinst.cxx",
+    "    OpenGLContext::prepareForYield();\n"
+    "\n"
+    "    if ( GetSalData()->mnAppThreadId != GetCurrentThreadId() )\n",
+    "#if HAVE_FEATURE_OPENGL\n"
+    "    OpenGLContext::prepareForYield();\n"
+    "#endif\n"
+    "\n"
+    "    if ( GetSalData()->mnAppThreadId != GetCurrentThreadId() )\n",
+    dep_step >= 2,
+    "S02 win salinst guard BeforeReleaseHandler prepareForYield",
+)
+
+changes += toggle_once(
+    root / "vcl/win/app/salinst.cxx",
+    "    m_bSupportsOpenGL = true;\n",
+    "#if HAVE_FEATURE_OPENGL\n    m_bSupportsOpenGL = true;\n#endif\n",
+    dep_step >= 2,
+    "S02 win salinst guard m_bSupportsOpenGL flag",
+)
+
+changes += toggle_once(
+    root / "vcl/win/app/salinst.cxx",
+    "    OpenGLContext::prepareForYield();\n"
+    "    SendComWndMessage(SAL_MSG_DESTROYFRAME, 0, reinterpret_cast<LPARAM>(pFrame));\n",
+    "#if HAVE_FEATURE_OPENGL\n"
+    "    OpenGLContext::prepareForYield();\n"
+    "#endif\n"
+    "    SendComWndMessage(SAL_MSG_DESTROYFRAME, 0, reinterpret_cast<LPARAM>(pFrame));\n",
+    dep_step >= 2,
+    "S02 win salinst guard DestroyFrame prepareForYield",
+)
+
+changes += toggle_once(
+    root / "vcl/inc/win/salinst.h",
+    "    virtual OpenGLContext*      CreateOpenGLContext() override;\n",
+    "#if HAVE_FEATURE_OPENGL\n    virtual OpenGLContext*      CreateOpenGLContext() override;\n#endif\n",
+    dep_step >= 2,
+    "S02 win salinst.h guard CreateOpenGLContext override",
 )
 
 # S03: remove RDF chain from merged/runtime surface.
