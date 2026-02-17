@@ -56,6 +56,26 @@ if [ -n "$EXTRA_ALLOWLIST" ]; then
         | awk '{gsub(/^[ \t]+|[ \t]+$/, ""); if ($0 != "") print}' >> "$TMP_ALLOWED"
 fi
 
+# Fast path: reuse dependency data already gathered by measure-artifact.sh.
+# This avoids re-running dumpbin/otool/ldd, which on MSYS2 (Windows) triggers
+# heavy fork() overhead that can OOM a 7GB GitHub Actions runner (exit 157).
+DEPS_FROM_JSON="${DEPS_FROM_JSON:-}"
+if [ -n "$DEPS_FROM_JSON" ] && [ -f "$DEPS_FROM_JSON" ]; then
+    python3 -c '
+import json, os, sys
+with open(sys.argv[1]) as f:
+    data = json.load(f)
+deps = set()
+for file_deps in data.get("dependencies", {}).get("by_file", {}).values():
+    for d in file_deps:
+        deps.add(os.path.basename(d))
+for d in sorted(deps):
+    print(d)
+' "$DEPS_FROM_JSON" > "$TMP_DEPS"
+    echo "    (deps read from $(basename "$DEPS_FROM_JSON"))"
+else
+    # Fall back to native scanning when no JSON is available.
+
 gather_macos_deps() {
     local program="$1"
     find "$program" -maxdepth 1 -type f | while read -r f; do
@@ -132,6 +152,8 @@ case "$PLATFORM" in
         exit 1
         ;;
 esac | sort -u > "$TMP_DEPS"
+
+fi  # end of DEPS_FROM_JSON fast-path / native-scanning fallback
 
 MISSING=0
 while IFS= read -r dep; do
