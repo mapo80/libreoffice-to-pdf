@@ -17,6 +17,19 @@ set -euo pipefail
 
 LO_SRC="${1:?Missing LO source dir}"
 
+# --- Windows/MSVC: skip entirely ---
+# MSVC uses /GL + /LTCG for LTO, which is already set up by --enable-lto
+# in configure. The "restrict LTO to merged lib" trick is only needed for
+# GCC/Clang where LTO can eliminate symbols needed by non-merged libs.
+# MSVC's LTCG + import libraries (.lib) handle this correctly.
+case "$(uname -s)" in
+    MSYS_NT*|MINGW*|CYGWIN*)
+        echo "    Windows/MSVC build — skipping GCC/Clang LTO restriction"
+        echo "    Patch 009 complete (no-op on Windows)"
+        exit 0
+        ;;
+esac
+
 # --- Step 1: Find and patch the platform gcc.mk to disable global LTO ---
 # gb_LTOFLAGS is defined in solenv/gbuild/platform/ and applied to ALL targets.
 # We clear it so no target gets LTO by default.

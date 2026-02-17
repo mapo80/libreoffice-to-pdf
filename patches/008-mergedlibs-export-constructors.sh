@@ -40,6 +40,9 @@ case "$(uname -s)" in
     Darwin)
         echo "    macOS: skipping --export-dynamic (ld64 exports default-visibility symbols automatically)"
         ;;
+    MSYS_NT*|MINGW*|CYGWIN*)
+        echo "    Windows/MSVC: skipping --export-dynamic (DLL exports controlled by .lib import libraries)"
+        ;;
     *)
         if ! grep -q 'export-dynamic' "$MERGED_MK"; then
             TAB="$(printf '\t')"

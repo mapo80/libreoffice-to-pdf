@@ -73,7 +73,6 @@ if test "$enable_slimlo" = "yes"; then\
     enable_sdremote=no\
     enable_sdremote_bluetooth=no\
     enable_skia=no\
-    enable_scripting=no\
     enable_xmlhelp=no\
     enable_zxing=no\
     test_libepubgen=no\
