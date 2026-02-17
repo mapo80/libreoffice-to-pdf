@@ -78,50 +78,14 @@ wrap_optional DESKTOP fps_office
 echo "    --- DBCONNECTIVITY guards ---"
 wrap_optional DBCONNECTIVITY frm
 
-# AVMEDIA on WNT: avmediawin is guarded by AVMEDIA in Repository.mk
-# but unconditional in merged list for WNT.
-# The entry is $(if $(filter WNT,$(OS)),avmediawin) — use grep -F for
-# literal matching (regex $ anchors break the pattern).
-echo "    --- AVMEDIA/WNT guard ---"
-if grep -q 'gb_Helper_optional,AVMEDIA,.*avmediawin' "$MERGED"; then
-    echo "    avmediawin already patched (skipping)"
-elif grep -qF '$(if $(filter WNT,$(OS)),avmediawin)' "$MERGED"; then
-    # awk gsub() treats first arg as regex ($ = end-of-line) — use index()
-    # for literal string replacement instead.
-    awk -v old='$(if $(filter WNT,$(OS)),avmediawin)' \
-        -v new='$(call gb_Helper_optional,AVMEDIA,$(if $(filter WNT,$(OS)),avmediawin))' \
-        '{
-        i = index($0, old)
-        if (i > 0) $0 = substr($0, 1, i-1) new substr($0, i + length(old))
-        print
-    }' "$MERGED" > "$MERGED.tmp" && mv "$MERGED.tmp" "$MERGED"
-    echo "    Wrapped: avmediawin (optional on AVMEDIA)"
-else
-    wrap_optional AVMEDIA avmediawin
-fi
+# NOTE: avmediawin and emser WNT-conditional guards moved to patch 027
+# (Python-based) for cross-platform reliability. Shell awk/grep with
+# makefile $(if $(filter WNT,$(OS)),...) patterns is fragile on MSYS2.
 
 # ENABLE_SLIMLO: filter libraries stripped by patch 004
 echo "    --- ENABLE_SLIMLO guards (filter libs from patch 004) ---"
 wrap_exclude ENABLE_SLIMLO icg
 wrap_exclude ENABLE_SLIMLO xsltdlg
 wrap_exclude ENABLE_SLIMLO xsltfilter
-
-# ENABLE_SLIMLO: embedserv module is stripped by patch 002,
-# so emser must not stay in the merged list on Windows.
-# Same grep -F fix as avmediawin above.
-if grep -q 'ENABLE_SLIMLO.*emser' "$MERGED"; then
-    echo "    emser already patched (skipping)"
-elif grep -qF '$(if $(filter WNT,$(OS)),emser)' "$MERGED"; then
-    awk -v old='$(if $(filter WNT,$(OS)),emser)' \
-        -v new='$(if $(ENABLE_SLIMLO),,$(if $(filter WNT,$(OS)),emser))' \
-        '{
-        i = index($0, old)
-        if (i > 0) $0 = substr($0, 1, i-1) new substr($0, i + length(old))
-        print
-    }' "$MERGED" > "$MERGED.tmp" && mv "$MERGED.tmp" "$MERGED"
-    echo "    Wrapped: emser (exclude when ENABLE_SLIMLO)"
-else
-    wrap_exclude ENABLE_SLIMLO emser
-fi
 
 echo "    Patch 006 complete"

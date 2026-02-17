@@ -49,6 +49,32 @@ def toggle_once(path: Path, old: str, new: str, enable: bool, label: str) -> boo
 
 changes = 0
 
+# ---------- Always-on mergelib guards for WNT-conditional entries ----------
+# These use $(if $(filter WNT,$(OS)),...) which contains makefile $ characters
+# that break shell grep/awk/sed regex on MSYS2 Windows. Python str.replace()
+# handles them as literal strings reliably across all platforms.
+
+# avmediawin: conditional on AVMEDIA in Repository.mk but unconditional in
+# merged list for WNT. Wrap with gb_Helper_optional so it's excluded when
+# --disable-avmedia removes AVMEDIA from BUILD_TYPE.
+changes += toggle_once(
+    root / "solenv/gbuild/extensions/pre_MergedLibsList.mk",
+    "\t$(if $(filter WNT,$(OS)),avmediawin) \\\n",
+    "\t$(call gb_Helper_optional,AVMEDIA,$(if $(filter WNT,$(OS)),avmediawin)) \\\n",
+    True,
+    "pre_MergedLibsList avmediawin AVMEDIA guard",
+)
+
+# emser: embedserv module is stripped by patch 002 under ENABLE_SLIMLO,
+# so emser must not stay in the merged list on Windows.
+changes += toggle_once(
+    root / "solenv/gbuild/extensions/pre_MergedLibsList.mk",
+    "\t$(if $(filter WNT,$(OS)),emser) \\\n",
+    "\t$(if $(ENABLE_SLIMLO),,$(if $(filter WNT,$(OS)),emser)) \\\n",
+    True,
+    "pre_MergedLibsList emser SLIMLO guard",
+)
+
 # Normalize older S01 variant that forced macOS sandbox (reverted now).
 changes += toggle_once(
     root / "configure.ac",
