@@ -1,0 +1,26 @@
+# SlimLO DOCX aggressive runtime dependency allowlist (macOS)
+# Patterns are shell globs matched against dependency basenames.
+
+libmergedlo.dylib
+libswlo.dylib
+libsw_writerfilterlo.dylib
+libvclplug_osxlo.dylib
+libuno_*.dylib.3
+libi18nlangtag.dylib
+liblangtag.1.dylib
+libicu*.dylib.77
+libxmlreaderlo.dylib
+libunoidllo.dylib
+libgcc3_uno.dylib
+libstorelo.dylib
+libstocserviceslo.dylib
+libreglo.dylib
+libbasegfxlo.dylib
+libcomphelper.dylib
+libpdffilterlo.dylib
+libswdlo.dylib
+liblocaledata_en.dylib
+libsaxlo.dylib
+libtllo.dylib
+libucbhelper.dylib
+libslimlo*.dylib

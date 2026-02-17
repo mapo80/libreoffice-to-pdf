@@ -1,0 +1,57 @@
+# SlimLO DOCX aggressive runtime dependency allowlist (Linux)
+# Patterns are shell globs matched against dependency names from ldd.
+# Updated: dep-ladder S01-S11, SLIMLO_DEP_STEP=7
+
+# --- Kernel / dynamic linker ---
+linux-vdso.so*
+ld-linux*.so*
+
+# --- Internal LO libraries (shipped in artifacts/program/) ---
+libmergedlo.so*
+libswlo.so*
+libsw_writerfilterlo.so*
+libuno_*.so*
+libi18nlangtag.so*
+liblangtag-lo.so*
+libicu*.so*
+libxmlreaderlo.so*
+libunoidllo.so*
+libstorelo.so*
+libstocserviceslo.so*
+libreglo.so*
+libbasegfxlo.so*
+libcomphelper.so*
+liblocaledata_en.so*
+libsaxlo.so*
+libpdffilterlo.so*
+libswdlo.so*
+libcairo-lo.so*
+libpixman-1.so*
+libxml2.so*
+libxslt.so*
+libcairocanvaslo.so*
+libgcc3_uno.so*
+
+# --- SlimLO C API ---
+libslimlo.so*
+
+# --- System libraries (expected on any Linux) ---
+libc.so*
+libm.so*
+libstdc++.so*
+libgcc_s.so*
+libz.so*
+libpng16.so*
+libfreetype.so*
+libfontconfig.so*
+libexpat.so*
+libbz2.so*
+libbrotlicommon.so*
+libbrotlidec.so*
+libdl.so*
+libpthread.so*
+librt.so*
+
+# --- Runtime-resolved via --export-dynamic (not found by ldd, OK) ---
+# libucbhelper.so — merged into libmergedlo.so
+# libtllo.so — merged into libmergedlo.so

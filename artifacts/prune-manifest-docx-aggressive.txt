@@ -1,0 +1,43 @@
+# SlimLO DOCX aggressive prune manifest
+# generated_at=2026-02-15T17:31:49Z
+# artifact_source=artifacts/macos-docx-ultra-nostubs
+# baseline_kb=133696
+# final_kb=133696
+# saved_kb=0
+
+[accepted]
+
+
+[rejected]
+libnss3
+libnssutil3
+libsmime3
+libnspr4
+libplc4
+libplds4
+libsoftokn3
+libfreebl3
+libcurl.4
+librdf-lo.0
+libraptor2-lo.0
+librasqal-lo.3
+libepoxy
+libAppleRemotelo
+liblcms2.2
+
+[rejected_timeout]
+libplds4
+
+[rejected_hard_needed]
+libnss3
+libnssutil3
+libsmime3
+libnspr4
+libplc4
+libcurl.4
+librdf-lo.0
+libraptor2-lo.0
+librasqal-lo.3
+libepoxy
+libAppleRemotelo
+liblcms2.2

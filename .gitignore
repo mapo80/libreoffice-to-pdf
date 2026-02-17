@@ -4,7 +4,9 @@ lo-src/
 # Build output
 output/
 output-*/
-artifacts/
+artifacts/*
+!artifacts/deps-allowlist-*.txt
+!artifacts/prune-manifest-*.txt
 slimlo-api/build/
 slimlo-api/build-*/
 
