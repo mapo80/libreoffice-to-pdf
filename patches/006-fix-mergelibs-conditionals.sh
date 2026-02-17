@@ -86,10 +86,13 @@ echo "    --- AVMEDIA/WNT guard ---"
 if grep -q 'gb_Helper_optional,AVMEDIA,.*avmediawin' "$MERGED"; then
     echo "    avmediawin already patched (skipping)"
 elif grep -qF '$(if $(filter WNT,$(OS)),avmediawin)' "$MERGED"; then
-    awk '{
-        old = "$(if $(filter WNT,$(OS)),avmediawin)"
-        new = "$(call gb_Helper_optional,AVMEDIA,$(if $(filter WNT,$(OS)),avmediawin))"
-        gsub(old, new)
+    # awk gsub() treats first arg as regex ($ = end-of-line) — use index()
+    # for literal string replacement instead.
+    awk -v old='$(if $(filter WNT,$(OS)),avmediawin)' \
+        -v new='$(call gb_Helper_optional,AVMEDIA,$(if $(filter WNT,$(OS)),avmediawin))' \
+        '{
+        i = index($0, old)
+        if (i > 0) $0 = substr($0, 1, i-1) new substr($0, i + length(old))
         print
     }' "$MERGED" > "$MERGED.tmp" && mv "$MERGED.tmp" "$MERGED"
     echo "    Wrapped: avmediawin (optional on AVMEDIA)"
@@ -109,10 +112,11 @@ wrap_exclude ENABLE_SLIMLO xsltfilter
 if grep -q 'ENABLE_SLIMLO.*emser' "$MERGED"; then
     echo "    emser already patched (skipping)"
 elif grep -qF '$(if $(filter WNT,$(OS)),emser)' "$MERGED"; then
-    awk '{
-        old = "$(if $(filter WNT,$(OS)),emser)"
-        new = "$(if $(ENABLE_SLIMLO),,$(if $(filter WNT,$(OS)),emser))"
-        gsub(old, new)
+    awk -v old='$(if $(filter WNT,$(OS)),emser)' \
+        -v new='$(if $(ENABLE_SLIMLO),,$(if $(filter WNT,$(OS)),emser))' \
+        '{
+        i = index($0, old)
+        if (i > 0) $0 = substr($0, 1, i-1) new substr($0, i + length(old))
         print
     }' "$MERGED" > "$MERGED.tmp" && mv "$MERGED.tmp" "$MERGED"
     echo "    Wrapped: emser (exclude when ENABLE_SLIMLO)"
