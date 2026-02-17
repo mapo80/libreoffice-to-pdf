@@ -325,6 +325,29 @@ changes += toggle_once(
     "S02 configure macOS OpenGL gating",
 )
 
+# S02: also disable OpenGL on Windows for SlimLO.
+# On Linux --disable-gui sets USING_X11=FALSE so OpenGL is skipped automatically.
+# On Windows, HAVE_FEATURE_OPENGL is unconditional — gate it like macOS.
+changes += toggle_once(
+    root / "configure.ac",
+    """elif test $_os = WINNT; then
+    ENABLE_OPENGL_TRANSITIONS=TRUE
+    AC_DEFINE(HAVE_FEATURE_OPENGL,1)
+    ENABLE_OPENGL_CANVAS=TRUE
+""",
+    """elif test $_os = WINNT; then
+    if test "$enable_slimlo" = "yes"; then
+        :
+    else
+        ENABLE_OPENGL_TRANSITIONS=TRUE
+        AC_DEFINE(HAVE_FEATURE_OPENGL,1)
+        ENABLE_OPENGL_CANVAS=TRUE
+    fi
+""",
+    dep_step >= 2,
+    "S02 configure Windows OpenGL gating",
+)
+
 changes += toggle_once(
     root / "vcl/Library_vcl.mk",
     "$(eval $(call gb_Library_use_externals,vcl,\\\n"
