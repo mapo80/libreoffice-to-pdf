@@ -24,7 +24,9 @@ fi
 
 get_var() {
     local key="$1"
-    awk -F= -v k="$key" '$1 == "export " k {print substr($0, index($0, "=") + 1); exit}' "$CONFIG_HOST"
+    # Use grep + sed instead of awk — more robust against lines that might
+    # lack a trailing newline (BSD sed 'a\' on macOS can concatenate lines).
+    grep "^export ${key}=" "$CONFIG_HOST" 2>/dev/null | head -1 | sed "s/^export ${key}=//"
 }
 
 trim() {

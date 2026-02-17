@@ -109,9 +109,9 @@ echo "    Inserted SlimLO strip block into configure.ac"
 if grep -q 'AC_SUBST(ENABLE_SLIMLO)' "$CONFIGURE"; then
     echo "    AC_SUBST already present (skipping)"
 else
-    sed -i.bak '/^AC_SUBST(ENABLE_WASM_STRIP)$/a\
-AC_SUBST(ENABLE_SLIMLO)' "$CONFIGURE"
-    rm -f "$CONFIGURE.bak"
+    awk '/^AC_SUBST\(ENABLE_WASM_STRIP\)$/ {
+        print; print "AC_SUBST(ENABLE_SLIMLO)"; next
+    } {print}' "$CONFIGURE" > "$CONFIGURE.tmp" && mv "$CONFIGURE.tmp" "$CONFIGURE"
     echo "    Added AC_SUBST(ENABLE_SLIMLO) to configure.ac"
 fi
 
@@ -121,10 +121,13 @@ fi
 if grep -q 'ENABLE_SLIMLO' "$CONFIG_HOST"; then
     echo "    config_host.mk.in already patched (skipping)"
 else
-    # Add after the ENABLE_WASM_STRIP_DBACCESS line
-    sed -i.bak '/^export ENABLE_WASM_STRIP_DBACCESS/a\
-export ENABLE_SLIMLO=@ENABLE_SLIMLO@' "$CONFIG_HOST"
-    rm -f "$CONFIG_HOST.bak"
+    # Add after the ENABLE_WASM_STRIP_DBACCESS line.
+    # Use awk instead of sed 'a\' — BSD sed on macOS CI runners may not
+    # insert a proper newline before the appended text, causing line
+    # concatenation (ENABLE_SLIMLO=TRUEexport ENABLE_WASM_STRIP_EPUB=).
+    awk '/^export ENABLE_WASM_STRIP_DBACCESS/ {
+        print; print "export ENABLE_SLIMLO=@ENABLE_SLIMLO@"; next
+    } {print}' "$CONFIG_HOST" > "$CONFIG_HOST.tmp" && mv "$CONFIG_HOST.tmp" "$CONFIG_HOST"
     echo "    Added ENABLE_SLIMLO to config_host.mk.in"
 fi
 
