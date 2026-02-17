@@ -67,6 +67,7 @@ jobs:
           'ProgramFiles(x86)': C:\Program Files (x86)
           PROGRAMFILESX86: C:\Program Files (x86)
           PKG_CONFIG: /usr/local/bin/pkgconf-2.4.3.exe
+          SLIMLO_DEP_STEP: "7"
         run: |
           cd /d/a/${{ github.event.repository.name }}/${{ github.event.repository.name }}
           mkdir -p .ci-debug

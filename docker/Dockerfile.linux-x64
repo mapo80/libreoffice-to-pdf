@@ -75,7 +75,7 @@ RUN chmod +x scripts/*.sh patches/*.sh
 # If not provided, Docker may cache the RUN layer even when scripts change.
 ARG SCRIPTS_HASH=default
 ARG NPROC=10
-ARG SLIMLO_DEP_STEP=0
+ARG SLIMLO_DEP_STEP=7
 
 # --- Clone + Patch + Configure + Build in a SINGLE RUN ---
 # All operations that use the lo-src cache mount MUST be in one RUN.
@@ -139,7 +139,8 @@ RUN --mount=type=cache,target=/build/lo-src \
         # Post-autogen patches (must run AFTER autogen generates platform .mk files)
         bash ./patches/009-fix-nonmerged-lto-link.postautogen lo-src && \
         # Force re-link of merged lib (ldflags change not detected by make)
-        rm -f lo-src/workdir/LinkTarget/Library/libmergedlo.so 2>/dev/null || true && \
+        # NOTE: Subshell scopes || true to rm only (prevents catching upstream && failures)
+        (rm -f lo-src/workdir/LinkTarget/Library/libmergedlo.so 2>/dev/null || true) && \
         echo "$CONFIG_HASH" > lo-src/.slimlo-config-hash; \
     fi && \
     SLIMLO_DEP_STEP="$SLIMLO_DEP_STEP" ./scripts/assert-config-features.sh lo-src/config_host.mk linux && \
