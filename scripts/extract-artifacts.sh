@@ -276,6 +276,20 @@ done
 rm -f "$OUTPUT_DIR/program/"*.py
 
 # -----------------------------------------------------------
+# 7b3. Remove external libraries already unlinked by dep-ladder patches
+#      These are built by LO's external system but nothing links to them.
+# -----------------------------------------------------------
+echo "  Removing dep-ladder unlinked external libraries..."
+# OpenGL binding library — S02 removed from merged deps, nothing links to it.
+for extlib in "libepoxy*" "epoxy.dll"; do
+    rm -f "$OUTPUT_DIR/program/"$extlib
+done
+# Color management library — S06 removed from vcl externals, nothing links to it.
+for extlib in "liblcms2*" "lcms2.dll"; do
+    rm -f "$OUTPUT_DIR/program/"$extlib
+done
+
+# -----------------------------------------------------------
 # 7c. Remove XCD config for unused modules
 # -----------------------------------------------------------
 echo "  Removing unused XCD files..."
