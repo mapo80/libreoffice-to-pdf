@@ -536,9 +536,10 @@ if [ -f "$PROJECT_DIR/slimlo-api/CMakeLists.txt" ] && command -v cmake >/dev/nul
         [ -n "$RC_BIN" ] && CMAKE_EXTRA_ARGS+=("-DCMAKE_RC_COMPILER=$(cygpath -m "$RC_BIN")")
         [ -n "$MT_BIN" ] && CMAKE_EXTRA_ARGS+=("-DCMAKE_MT=$(cygpath -m "$MT_BIN")")
     fi
+    # ${arr[@]+...} syntax avoids "unbound variable" with set -u on bash < 4.4
     cmake -S "$PROJECT_DIR/slimlo-api" \
           -B "$PROJECT_DIR/slimlo-api/build" \
-          "${CMAKE_EXTRA_ARGS[@]}" \
+          ${CMAKE_EXTRA_ARGS[@]+"${CMAKE_EXTRA_ARGS[@]}"} \
           -DINSTDIR="$INSTDIR_ROOT" \
           -DCMAKE_BUILD_TYPE=Release
     cmake --build "$PROJECT_DIR/slimlo-api/build" -j"$NPROC"
