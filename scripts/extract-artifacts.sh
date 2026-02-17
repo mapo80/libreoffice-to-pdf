@@ -352,9 +352,22 @@ rm -f "$OUTPUT_DIR/share/registry/ctl.xcd"
 rm -f "$OUTPUT_DIR/share/registry/graphicfilter.xcd"
 
 # -----------------------------------------------------------
+# 7f3. Remove mergelibs stub files (21-byte "invalid - merged lib" placeholders).
+#      These are created by --enable-mergelibs but serve no runtime purpose:
+#      UNO component loading uses services.rdb, not file existence probing.
+# -----------------------------------------------------------
+echo "  Removing mergelibs stub files..."
+STUB_COUNT=0
+while IFS= read -r stubfile; do
+    rm -f "$stubfile"
+    STUB_COUNT=$((STUB_COUNT + 1))
+done < <(find "$OUTPUT_DIR/program" -maxdepth 1 -type f -size 21c 2>/dev/null)
+echo "    Removed $STUB_COUNT stub files"
+
+# -----------------------------------------------------------
 # 7g. Remove NEEDED-but-unused external libraries via patchelf
 #     libcurl.so.4 is NEEDED by libmergedlo.so but never called for local conversion.
-#     NOTE: librdf/libraptor2/librasqal CANNOT be removed — called at runtime.
+#     NOTE: librdf/libraptor2/librasqal removed in step 7b3 (S07 guards RDF calls).
 # -----------------------------------------------------------
 echo "  Removing unused NEEDED libraries..."
 case "$(uname -s)" in
