@@ -700,5 +700,181 @@ changes += toggle_once(
     "S06 pdfwriter_impl add no-lcms2 fallback branch",
 )
 
+# S07: guard RDF-consuming code paths to allow removing the RDF stack
+# (librdf, libraptor2, librasqal, libunordflo) from the runtime.
+# Without these guards, rdf::URI::createKnown() throws DeploymentException
+# when the UNO service is missing, crashing on DOCX files with bookmarks.
+
+# S07: propagate ENABLE_SLIMLO define to sw module so #if guards compile correctly.
+changes += toggle_once(
+    root / "sw/Library_sw.mk",
+    "$(eval $(call gb_Library_add_defs,sw,\\\n"
+    "    -DSW_DLLIMPLEMENTATION \\\n"
+    "\t-DSWUI_DLL_NAME=\\\"$(call gb_Library_get_runtime_filename,$(call gb_Library__get_name,swui))\\\" \\\n"
+    "))\n",
+    "$(eval $(call gb_Library_add_defs,sw,\\\n"
+    "    -DSW_DLLIMPLEMENTATION \\\n"
+    "\t-DSWUI_DLL_NAME=\\\"$(call gb_Library_get_runtime_filename,$(call gb_Library__get_name,swui))\\\" \\\n"
+    "    $(if $(ENABLE_SLIMLO),-DENABLE_SLIMLO=1) \\\n"
+    "))\n",
+    dep_step >= 7,
+    "S07 sw Library_sw.mk add ENABLE_SLIMLO define",
+)
+
+# S07a: porlay.cxx — getBookmarkColor() RDF guard
+changes += toggle_once(
+    root / "sw/source/core/text/porlay.cxx",
+    "    try\n"
+    "    {\n"
+    "        SwDoc& rDoc = const_cast<SwDoc&>(rNode.GetDoc());\n"
+    "        const rtl::Reference< SwXBookmark > xRef = SwXBookmark::CreateXBookmark(rDoc, pBookmark);\n"
+    "        if (const SwDocShell* pShell = rDoc.GetDocShell())\n"
+    "        {\n"
+    "            rtl::Reference<SwXTextDocument> xModel = pShell->GetBaseModel();\n"
+    "\n"
+    "            static uno::Reference< uno::XComponentContext > xContext(\n"
+    "                ::comphelper::getProcessComponentContext());\n"
+    "\n"
+    "            static uno::Reference< rdf::XURI > xODF_SHADING(\n"
+    "                rdf::URI::createKnown(xContext, rdf::URIs::LO_EXT_SHADING), uno::UNO_SET_THROW);\n",
+    "    try\n"
+    "    {\n"
+    "#if !defined(ENABLE_SLIMLO)\n"
+    "        SwDoc& rDoc = const_cast<SwDoc&>(rNode.GetDoc());\n"
+    "        const rtl::Reference< SwXBookmark > xRef = SwXBookmark::CreateXBookmark(rDoc, pBookmark);\n"
+    "        if (const SwDocShell* pShell = rDoc.GetDocShell())\n"
+    "        {\n"
+    "            rtl::Reference<SwXTextDocument> xModel = pShell->GetBaseModel();\n"
+    "\n"
+    "            static uno::Reference< uno::XComponentContext > xContext(\n"
+    "                ::comphelper::getProcessComponentContext());\n"
+    "\n"
+    "            static uno::Reference< rdf::XURI > xODF_SHADING(\n"
+    "                rdf::URI::createKnown(xContext, rdf::URIs::LO_EXT_SHADING), uno::UNO_SET_THROW);\n",
+    dep_step >= 7,
+    "S07 porlay getBookmarkColor RDF guard open",
+)
+
+changes += toggle_once(
+    root / "sw/source/core/text/porlay.cxx",
+    "        }\n"
+    "    }\n"
+    "    catch (const lang::IllegalArgumentException&)\n"
+    "    {\n"
+    "    }\n"
+    "\n"
+    "    return c;\n"
+    "}\n"
+    "\n"
+    "static OUString getBookmarkType",
+    "        }\n"
+    "#endif // !ENABLE_SLIMLO\n"
+    "    }\n"
+    "    catch (const lang::IllegalArgumentException&)\n"
+    "    {\n"
+    "    }\n"
+    "\n"
+    "    return c;\n"
+    "}\n"
+    "\n"
+    "static OUString getBookmarkType",
+    dep_step >= 7,
+    "S07 porlay getBookmarkColor RDF guard close",
+)
+
+# S07b: porlay.cxx — getBookmarkType() RDF guard
+changes += toggle_once(
+    root / "sw/source/core/text/porlay.cxx",
+    "    try\n"
+    "    {\n"
+    "        SwDoc& rDoc = const_cast<SwDoc&>(rNode.GetDoc());\n"
+    "        const rtl::Reference< SwXBookmark > xRef = SwXBookmark::CreateXBookmark(rDoc, pBookmark);\n"
+    "        if (const SwDocShell* pShell = rDoc.GetDocShell())\n"
+    "        {\n"
+    "            rtl::Reference<SwXTextDocument> xModel = pShell->GetBaseModel();\n"
+    "\n"
+    "            static uno::Reference< uno::XComponentContext > xContext(\n"
+    "                ::comphelper::getProcessComponentContext());\n"
+    "\n"
+    "            static uno::Reference< rdf::XURI > xODF_PREFIX(\n"
+    "                rdf::URI::createKnown(xContext, rdf::URIs::RDF_TYPE), uno::UNO_SET_THROW);\n",
+    "    try\n"
+    "    {\n"
+    "#if !defined(ENABLE_SLIMLO)\n"
+    "        SwDoc& rDoc = const_cast<SwDoc&>(rNode.GetDoc());\n"
+    "        const rtl::Reference< SwXBookmark > xRef = SwXBookmark::CreateXBookmark(rDoc, pBookmark);\n"
+    "        if (const SwDocShell* pShell = rDoc.GetDocShell())\n"
+    "        {\n"
+    "            rtl::Reference<SwXTextDocument> xModel = pShell->GetBaseModel();\n"
+    "\n"
+    "            static uno::Reference< uno::XComponentContext > xContext(\n"
+    "                ::comphelper::getProcessComponentContext());\n"
+    "\n"
+    "            static uno::Reference< rdf::XURI > xODF_PREFIX(\n"
+    "                rdf::URI::createKnown(xContext, rdf::URIs::RDF_TYPE), uno::UNO_SET_THROW);\n",
+    dep_step >= 7,
+    "S07 porlay getBookmarkType RDF guard open",
+)
+
+changes += toggle_once(
+    root / "sw/source/core/text/porlay.cxx",
+    "        }\n"
+    "    }\n"
+    "    catch (const lang::IllegalArgumentException&)\n"
+    "    {\n"
+    "    }\n"
+    "\n"
+    "    return sRet;\n"
+    "}\n",
+    "        }\n"
+    "#endif // !ENABLE_SLIMLO\n"
+    "    }\n"
+    "    catch (const lang::IllegalArgumentException&)\n"
+    "    {\n"
+    "    }\n"
+    "\n"
+    "    return sRet;\n"
+    "}\n",
+    dep_step >= 7,
+    "S07 porlay getBookmarkType RDF guard close",
+)
+
+# S07c: itrform2.cxx — meta portion RDF shading guard
+changes += toggle_once(
+    root / "sw/source/core/text/itrform2.cxx",
+    "            if (xRet.is())\n"
+    "            {\n"
+    "                const SwDoc & rDoc = rInf.GetTextFrame()->GetDoc();\n"
+    "                static uno::Reference< uno::XComponentContext > xContext(\n"
+    "                    ::comphelper::getProcessComponentContext());\n"
+    "\n"
+    "                static uno::Reference< rdf::XURI > xODF_SHADING(\n"
+    "                    rdf::URI::createKnown(xContext, rdf::URIs::LO_EXT_SHADING), uno::UNO_SET_THROW);\n",
+    "            if (xRet.is())\n"
+    "            {\n"
+    "#if !defined(ENABLE_SLIMLO)\n"
+    "                const SwDoc & rDoc = rInf.GetTextFrame()->GetDoc();\n"
+    "                static uno::Reference< uno::XComponentContext > xContext(\n"
+    "                    ::comphelper::getProcessComponentContext());\n"
+    "\n"
+    "                static uno::Reference< rdf::XURI > xODF_SHADING(\n"
+    "                    rdf::URI::createKnown(xContext, rdf::URIs::LO_EXT_SHADING), uno::UNO_SET_THROW);\n",
+    dep_step >= 7,
+    "S07 itrform2 meta portion RDF guard open",
+)
+
+changes += toggle_once(
+    root / "sw/source/core/text/itrform2.cxx",
+    "                }\n"
+    "            }\n"
+    "            pPor = pMetaPor;\n",
+    "                }\n"
+    "#endif // !ENABLE_SLIMLO\n"
+    "            }\n"
+    "            pPor = pMetaPor;\n",
+    dep_step >= 7,
+    "S07 itrform2 meta portion RDF guard close",
+)
+
 print(f"    Patch 027 complete (SLIMLO_DEP_STEP={dep_step}, changed_blocks={changes})")
 PY

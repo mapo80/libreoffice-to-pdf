@@ -24,7 +24,9 @@ GATE_ENABLE_DOTNET="${GATE_ENABLE_DOTNET:-auto}"   # auto|0|1
 GATE_DOTNET_FRAMEWORK="${GATE_DOTNET_FRAMEWORK:-net8.0}"
 GATE_DOTNET_FILTER="${GATE_DOTNET_FILTER:-FullyQualifiedName~PdfConverterIntegrationTests.ConvertAsync_ValidDocx_ProducesPdf|FullyQualifiedName~PdfConverterIntegrationTests.ConvertAsync_BufferValidDocx_ReturnsPdfBytes|FullyQualifiedName~PdfConverterStreamIntegrationTests.ConvertAsync_StreamToStream_ValidDocx_ProducesPdf|FullyQualifiedName~PdfConverterStreamIntegrationTests.ConvertAsync_ConcurrentStreamToStream_AllSucceed|FullyQualifiedName~PdfConverterIntegrationTests.ConvertAsync_BufferUnsupportedFormat_ReturnsFailure|FullyQualifiedName~PdfConverterStreamValidationTests.ConvertAsync_StreamToStream_UnsupportedFormat_ReturnsFailure|FullyQualifiedName~PdfConverterStreamValidationTests.ConvertAsync_StreamToFile_UnsupportedFormat_ReturnsFailure}"
 GATE_STRICT_WARNINGS="${GATE_STRICT_WARNINGS:-1}"   # 0|1
-GATE_STRICT_WARNING_PATTERNS="${GATE_STRICT_WARNING_PATTERNS:-language-subtag-registry.xml}"
+# Note: language-subtag-registry.xml warnings are expected — liblangtag data is
+# intentionally removed to save 1.8 MB (non-fatal, conversion works without it).
+GATE_STRICT_WARNING_PATTERNS="${GATE_STRICT_WARNING_PATTERNS:-}"
 
 run_with_timeout() {
     local seconds="$1"
