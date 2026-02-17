@@ -27,6 +27,7 @@ jobs:
       - name: Build SlimLO
         env:
           ICU_DATA_FILTER_FILE: ${{ github.workspace }}/icu-filter.json
+          SLIMLO_DEP_STEP: "7"
           CCACHE_DIR: ~/Library/Caches/ccache
           CCACHE_COMPRESS: "1"
           CCACHE_MAXSIZE: 8G
