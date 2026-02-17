@@ -377,29 +377,19 @@ if [ -n "$PYTHON_BUILD_BIN" ]; then
     export PYTHON="$PYTHON_BUILD_BIN"
 fi
 if [ "$PLATFORM" = "windows" ]; then
-    WIN_ARCH="$(uname -m 2>/dev/null || echo unknown)"
-    case "$WIN_ARCH" in
-        x86_64|i686)
-            # NASM required for x86/x64 SIMD (libjpeg-turbo assembly)
-            NASM_BIN="${NASM:-}"
-            if [ -z "$NASM_BIN" ]; then
-                NASM_BIN="$(command -v nasm 2>/dev/null || command -v nasm.exe 2>/dev/null || true)"
-            fi
-            if [ -z "$NASM_BIN" ]; then
-                echo "ERROR: nasm not found. Install it and ensure it is available in PATH."
-                exit 1
-            fi
-            export NASM="$NASM_BIN"
-            echo "    Using NASM=$NASM"
-            "$NASM" -v || true
-            ;;
-        aarch64|arm64)
-            echo "    ARM64 detected — NASM not required"
-            ;;
-        *)
-            echo "    Unknown architecture $WIN_ARCH — skipping NASM check"
-            ;;
-    esac
+    # NASM is always required on Windows — even ARM64 cross-compile needs it
+    # for the x64 cross-toolset (OpenSSL x64 build in workdir_for_build).
+    NASM_BIN="${NASM:-}"
+    if [ -z "$NASM_BIN" ]; then
+        NASM_BIN="$(command -v nasm 2>/dev/null || command -v nasm.exe 2>/dev/null || true)"
+    fi
+    if [ -z "$NASM_BIN" ]; then
+        echo "ERROR: nasm not found. Install it and ensure it is available in PATH."
+        exit 1
+    fi
+    export NASM="$NASM_BIN"
+    echo "    Using NASM=$NASM"
+    "$NASM" -v || true
 fi
 if [ "$PLATFORM" = "windows" ]; then
     # Auto-detect VS version if not explicitly set
@@ -418,6 +408,11 @@ if [ "$PLATFORM" = "windows" ]; then
     echo "    Forcing Visual Studio year: $VISUAL_STUDIO_YEAR"
     echo "    Forcing ProgramFiles(x86) for configure: $WIN_PROGRAMFILES_X86"
     AUTOGEN_ARGS+=("--with-visual-studio=$VISUAL_STUDIO_YEAR")
+    # Cross-compile for ARM64 when TARGET_ARCH is set
+    if [ "${TARGET_ARCH:-}" = "aarch64" ]; then
+        echo "    Cross-compiling: x86_64 host → aarch64 target"
+        AUTOGEN_ARGS+=("--host=aarch64-pc-cygwin" "--build=x86_64-pc-cygwin")
+    fi
     env "ProgramFiles(x86)=$WIN_PROGRAMFILES_X86" \
         "PROGRAMFILESX86=$WIN_PROGRAMFILES_X86" \
         "PYTHON_FOR_BUILD=${PYTHON_FOR_BUILD:-}" \
@@ -467,6 +462,30 @@ echo ""
 fi # end SKIP_CONFIGURE
 
 # -----------------------------------------------------------
+# Step 4.6: Detect architecture change and clean stale builds
+# -----------------------------------------------------------
+# When switching architectures (e.g. x64 → ARM64) on the same workdir,
+# ALL compiled artifacts (.obj, .lib, .dll) are architecture-specific.
+# Mixing x64 objects with an ARM64 compiler causes C1905/LNK1257 errors.
+# Detect the change and wipe the entire workdir to force a clean rebuild.
+if [ -f "$LO_SRC_DIR/config_host.mk" ]; then
+    CURRENT_CPUNAME="$(awk -F= '/^export CPUNAME=/{print $2; exit}' "$LO_SRC_DIR/config_host.mk" || true)"
+    ARCH_MARKER="$LO_SRC_DIR/workdir/.slimlo_arch"
+    PREV_CPUNAME=""
+    [ -f "$ARCH_MARKER" ] && PREV_CPUNAME="$(cat "$ARCH_MARKER" 2>/dev/null || true)"
+
+    if [ -n "$PREV_CPUNAME" ] && [ "$PREV_CPUNAME" != "$CURRENT_CPUNAME" ]; then
+        echo ">>> Architecture changed: $PREV_CPUNAME → $CURRENT_CPUNAME"
+        echo "    Removing entire workdir (all objects are arch-specific)..."
+        rm -rf "$LO_SRC_DIR/workdir"
+        echo "    Done — full rebuild will run for $CURRENT_CPUNAME"
+    fi
+
+    mkdir -p "$LO_SRC_DIR/workdir"
+    echo "$CURRENT_CPUNAME" > "$ARCH_MARKER"
+fi
+
+# -----------------------------------------------------------
 # Step 5: Build
 # -----------------------------------------------------------
 echo ">>> Step 5: Building (this will take a while)..."
@@ -502,12 +521,24 @@ echo ""
 # Step 7: Build SlimLO C API wrapper
 # -----------------------------------------------------------
 echo ">>> Step 7: Building SlimLO C API..."
-if [ -f "$PROJECT_DIR/slimlo-api/CMakeLists.txt" ]; then
+if [ -f "$PROJECT_DIR/slimlo-api/CMakeLists.txt" ] && command -v cmake >/dev/null 2>&1; then
     if [ "$CLEAN_BUILD" = "1" ]; then
         rm -rf "$PROJECT_DIR/slimlo-api/build"
     fi
+    # On Windows (MSYS2), use Ninja generator since we have cl.exe in PATH.
+    # Also pass rc.exe/mt.exe paths explicitly — cmake may not find them via PATH.
+    # Use an array to preserve paths with spaces (e.g. "C:\Program Files\...").
+    CMAKE_EXTRA_ARGS=()
+    if [ "$PLATFORM" = "windows" ]; then
+        CMAKE_EXTRA_ARGS+=("-G" "Ninja")
+        RC_BIN="$(command -v rc.exe 2>/dev/null || true)"
+        MT_BIN="$(command -v mt.exe 2>/dev/null || true)"
+        [ -n "$RC_BIN" ] && CMAKE_EXTRA_ARGS+=("-DCMAKE_RC_COMPILER=$(cygpath -m "$RC_BIN")")
+        [ -n "$MT_BIN" ] && CMAKE_EXTRA_ARGS+=("-DCMAKE_MT=$(cygpath -m "$MT_BIN")")
+    fi
     cmake -S "$PROJECT_DIR/slimlo-api" \
           -B "$PROJECT_DIR/slimlo-api/build" \
+          "${CMAKE_EXTRA_ARGS[@]}" \
           -DINSTDIR="$INSTDIR_ROOT" \
           -DCMAKE_BUILD_TYPE=Release
     cmake --build "$PROJECT_DIR/slimlo-api/build" -j"$NPROC"
@@ -522,6 +553,9 @@ if [ -f "$PROJECT_DIR/slimlo-api/CMakeLists.txt" ]; then
     mkdir -p "$OUTPUT_DIR/include"
     cp "$PROJECT_DIR/slimlo-api/include/slimlo.h" "$OUTPUT_DIR/include/"
     echo "    SlimLO C API built and copied to $OUTPUT_DIR/program/"
+elif [ -f "$PROJECT_DIR/slimlo-api/CMakeLists.txt" ]; then
+    echo "    WARNING: cmake not found, skipping C API build"
+    echo "    Install cmake or use Visual Studio's bundled cmake"
 else
     echo "    WARNING: slimlo-api/CMakeLists.txt not found, skipping C API build"
 fi

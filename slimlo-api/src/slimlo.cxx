@@ -6,7 +6,9 @@
  * format detection, and PDF export.
  */
 
+#ifndef SLIMLO_BUILDING
 #define SLIMLO_BUILDING
+#endif
 
 #include "slimlo.h"
 
@@ -380,7 +382,7 @@ SLIMLO_API SlimLOError slimlo_convert_buffer(
 
     // Save to buffer (uses private:stream internally — no temp files)
     unsigned char* pdf_buf = nullptr;
-    size_t pdf_size = 0;
+    unsigned long pdf_size = 0;  // LOKit API uses unsigned long, not size_t
     bool success = doc->saveToBuffer(&pdf_buf, &pdf_size, "pdf",
         filter_options.empty() ? nullptr : filter_options.c_str());
 

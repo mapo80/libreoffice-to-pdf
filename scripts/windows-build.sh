@@ -12,8 +12,11 @@ HOST_ARCH="$(uname -m 2>/dev/null || echo unknown)"
 
 # Detect true target architecture from MSVC environment.
 # MSYS2 may report x86_64 even on ARM64 Windows (Prism emulation).
-# Use VSCMD_ARG_TGT_ARCH (set by vcvarsall.bat) or LIB paths as ground truth.
-TARGET_ARCH="$HOST_ARCH"
+# Priority: 1) TARGET_ARCH env var (from Start-WindowsBuild.ps1 -Arch)
+#           2) VSCMD_ARG_TGT_ARCH (set by vcvarsall.bat)
+#           3) LIB paths (contain "arm64" for ARM64 targets)
+#           4) HOST_ARCH (uname -m, fallback)
+TARGET_ARCH="${TARGET_ARCH:-$HOST_ARCH}"
 if [ "${VSCMD_ARG_TGT_ARCH:-}" = "arm64" ]; then
     TARGET_ARCH="aarch64"
 elif echo "${LIB:-}" | grep -qi 'arm64'; then
@@ -96,6 +99,28 @@ export PATH="$CL_DIR:$PATH"
 echo "    cl.exe: $CL_BIN"
 echo "    link.exe: $(command -v link.exe 2>/dev/null || echo 'not found')"
 
+# Ensure Windows SDK tools (rc.exe, mt.exe) are in PATH.
+# vcvarsall.bat sets WindowsSdkDir and WindowsSdkVersion but the bin directory
+# may not survive PATH transformations when entering MSYS2.
+if ! command -v rc.exe >/dev/null 2>&1; then
+    SDK_DIR="${WindowsSdkDir:-}"
+    SDK_VER="${WindowsSdkVersion:-}"
+    if [ -n "$SDK_DIR" ] && [ -n "$SDK_VER" ]; then
+        # Use target-arch SDK tools for cross-compilation
+        case "$TARGET_ARCH" in
+            aarch64|arm64) SDK_ARCH_DIR="arm64" ;;
+            *)             SDK_ARCH_DIR="x64" ;;
+        esac
+        SDK_BIN="$(cygpath -u "${SDK_DIR}bin/${SDK_VER}${SDK_ARCH_DIR}" 2>/dev/null || true)"
+        if [ -d "$SDK_BIN" ] && [ -x "$SDK_BIN/rc.exe" ]; then
+            export PATH="$SDK_BIN:$PATH"
+            echo "    Added Windows SDK bin to PATH: $SDK_BIN"
+        fi
+    fi
+fi
+echo "    rc.exe: $(command -v rc.exe 2>/dev/null || echo 'not found')"
+echo "    mt.exe: $(command -v mt.exe 2>/dev/null || echo 'not found')"
+
 # Check MSVC environment (INCLUDE, LIB, etc.)
 # These should be set by Start-WindowsBuild.ps1 or by running from a VS Developer Command Prompt.
 # Calling vcvarsall.bat from inside MSYS2 bash is unreliable and may hang.
@@ -158,29 +183,49 @@ echo "    Python: $WIN_PYTHON"
 echo ""
 
 # -----------------------------------------------------------
-# NASM (x86/x64 only — not needed on ARM64)
+# NASM (always needed on Windows — even ARM64 cross-compile
+# requires it for the x64 cross-toolset OpenSSL build)
 # -----------------------------------------------------------
-case "$TARGET_ARCH" in
-    x86_64|i686)
-        echo ">>> Finding NASM (x86 SIMD)..."
-        NASM_BIN="${NASM:-}"
-        if [ -z "$NASM_BIN" ]; then
-            NASM_BIN="$(command -v nasm 2>/dev/null || command -v nasm.exe 2>/dev/null || true)"
+echo ">>> Finding NASM..."
+NASM_BIN="${NASM:-}"
+if [ -z "$NASM_BIN" ]; then
+    NASM_BIN="$(command -v nasm 2>/dev/null || command -v nasm.exe 2>/dev/null || true)"
+fi
+if [ -z "$NASM_BIN" ]; then
+    echo "ERROR: nasm not found. Install it: pacman -S mingw-w64-x86_64-nasm"
+    exit 1
+fi
+export NASM="$NASM_BIN"
+echo "    NASM: $NASM_BIN"
+"$NASM_BIN" -v 2>/dev/null || true
+echo ""
+
+# -----------------------------------------------------------
+# CMake (for SlimLO C API build — Step 7)
+# -----------------------------------------------------------
+echo ">>> Finding CMake..."
+CMAKE_BIN="$(command -v cmake 2>/dev/null || command -v cmake.exe 2>/dev/null || true)"
+if [ -z "$CMAKE_BIN" ]; then
+    # Search in Visual Studio installation
+    VS_INSTALL_POSIX="$(cygpath -u "$VS_INSTALL" 2>/dev/null || echo "$VS_INSTALL")"
+    for candidate in \
+        "$VS_INSTALL_POSIX/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe" \
+        /c/Program\ Files/CMake/bin/cmake.exe \
+        /c/Program\ Files\ \(x86\)/CMake/bin/cmake.exe; do
+        if [ -x "$candidate" ]; then
+            CMAKE_BIN="$candidate"
+            export PATH="$(dirname "$CMAKE_BIN"):$PATH"
+            break
         fi
-        if [ -z "$NASM_BIN" ]; then
-            echo "ERROR: nasm not found. Install it: pacman -S mingw-w64-x86_64-nasm"
-            exit 1
-        fi
-        export NASM="$NASM_BIN"
-        echo "    NASM: $NASM_BIN"
-        "$NASM_BIN" -v 2>/dev/null || true
-        echo ""
-        ;;
-    aarch64|arm64)
-        echo ">>> ARM64 detected — NASM not required (x86 SIMD only)"
-        echo ""
-        ;;
-esac
+    done
+fi
+if [ -n "$CMAKE_BIN" ]; then
+    echo "    CMake: $CMAKE_BIN"
+    "$CMAKE_BIN" --version 2>/dev/null | head -1 || true
+else
+    echo "    WARNING: cmake not found — SlimLO C API build (Step 7) will be skipped"
+fi
+echo ""
 
 # -----------------------------------------------------------
 # ICU data filter
@@ -204,7 +249,9 @@ export SKIP_CONFIGURE="${SKIP_CONFIGURE:-0}"
 # -----------------------------------------------------------
 # Launch build
 # -----------------------------------------------------------
-echo ">>> Launching build.sh..."
+# Export TARGET_ARCH so build.sh can pass --host/--build to configure
+export TARGET_ARCH
+echo ">>> Launching build.sh (TARGET_ARCH=$TARGET_ARCH)..."
 echo ""
 
 if "$SCRIPT_DIR/build.sh"; then

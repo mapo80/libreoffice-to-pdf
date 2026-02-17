@@ -1,0 +1,243 @@
+name: Build Windows ARM64
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      docx_aggressive:
+        description: "Artifact profile (1=docx-aggressive, 0=compat)"
+        required: false
+        default: "1"
+        type: choice
+        options:
+          - "1"
+          - "0"
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 720
+    env:
+      DOCX_AGGRESSIVE: ${{ github.event.inputs.docx_aggressive || '1' }}
+      TARGET_ARCH: aarch64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MSYS
+          path-type: inherit
+          update: false
+          install: >-
+            autoconf automake bison flex gperf libtool make
+            patch pkg-config zip unzip wget perl python3
+            python-setuptools findutils git
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64_arm64
+
+      - name: Install pkgconf for LO
+        shell: msys2 {0}
+        run: |
+          # LO (build_os=cygwin) expects a working pkgconf-2.4.3.exe
+          # NASM is needed even for ARM64 cross-compile: the x64 cross-toolset
+          # (workdir_for_build) builds OpenSSL x64 which requires NASM.
+          pacman -S --noconfirm mingw-w64-x86_64-pkgconf mingw-w64-x86_64-nasm mingw-w64-x86_64-ninja
+          export PATH="/usr/local/bin:/mingw64/bin:$PATH"
+          mkdir -p /usr/local/bin
+          ln -sf /usr/bin/cygpath /usr/local/bin/wslpath
+          cat >/usr/local/bin/pkgconf-2.4.3.exe <<'EOF'
+          #!/usr/bin/env bash
+          export PATH="/mingw64/bin:$PATH"
+          exec /mingw64/bin/pkgconf.exe "$@"
+          EOF
+          chmod +x /usr/local/bin/pkgconf-2.4.3.exe
+          ln -sf /usr/local/bin/pkgconf-2.4.3.exe /usr/local/bin/pkg-config
+
+          command -v pkgconf-2.4.3.exe
+          pkgconf-2.4.3.exe --version
+          pkgconf-2.4.3.exe --atleast-pkgconfig-version 0.9.0
+          pkg-config --version
+          wslpath -u D:/lo-src
+          python3 --version
+          command -v python.exe || true
+
+      - uses: actions/cache@v4
+        with:
+          path: C:\msys64\home\runneradmin\.ccache
+          key: ccache-win-arm64-${{ hashFiles('LO_VERSION', 'distro-configs/SlimLO.conf', 'distro-configs/SlimLO-windows.conf', 'scripts/*.sh', 'patches/*.sh', 'patches/*.postautogen') }}
+          restore-keys: ccache-win-arm64-
+
+      - name: Build SlimLO
+        shell: msys2 {0}
+        env:
+          CHERE_INVOKING: 1
+          MSYS: winsymlinks:native
+          'ProgramFiles(x86)': C:\Program Files (x86)
+          PROGRAMFILESX86: C:\Program Files (x86)
+          PKG_CONFIG: /usr/local/bin/pkgconf-2.4.3.exe
+          DOCX_AGGRESSIVE: ${{ env.DOCX_AGGRESSIVE }}
+          TARGET_ARCH: aarch64
+        run: |
+          cd /d/a/${{ github.event.repository.name }}/${{ github.event.repository.name }}
+          mkdir -p .ci-debug
+          env | sort > .ci-debug/env.before-build.txt
+          export PATH="/usr/local/bin:$PATH:/mingw64/bin"
+          env | sort > .ci-debug/env.after-path.txt
+          [ -f "$PWD/icu-filter.json" ] || (echo "icu-filter.json not found in workspace: $PWD/icu-filter.json" && exit 1)
+          export ICU_DATA_FILTER_FILE="$(cygpath -m "$PWD/icu-filter.json")"
+          echo "Using ICU_DATA_FILTER_FILE=$ICU_DATA_FILTER_FILE"
+          {
+            echo "CL=${CL:-}"
+            echo "CFLAGS=${CFLAGS:-}"
+            echo "CXXFLAGS=${CXXFLAGS:-}"
+            echo "CPPFLAGS=${CPPFLAGS:-}"
+            echo "LDFLAGS=${LDFLAGS:-}"
+            echo "CC=${CC:-}"
+            echo "CXX=${CXX:-}"
+            echo "INCLUDE=${INCLUDE:-}"
+            echo "LIB=${LIB:-}"
+            echo "PATH=$PATH"
+            echo "TARGET_ARCH=${TARGET_ARCH:-}"
+            echo "VSCMD_ARG_TGT_ARCH=${VSCMD_ARG_TGT_ARCH:-}"
+          } > .ci-debug/toolchain-env.txt
+          perl -e 'print "ProgramFiles(x86)=$ENV{\"ProgramFiles(x86)\"}\n"'
+          test -f "/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe" && echo "vswhere found" || (echo "vswhere missing" && exit 1)
+          vswhere="/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe"
+          VS_INSTALL="$("$vswhere" -products '*' -latest -property installationPath | head -1)"
+          test -n "$VS_INSTALL" && echo "VS install: $VS_INSTALL" || (echo "No Visual Studio installation found" && exit 1)
+          CL_BIN="$(command -v cl.exe || true)"
+          [ -n "$CL_BIN" ] || (echo "cl.exe not found in PATH" && exit 1)
+          CL_DIR="$(dirname "$CL_BIN")"
+          export PATH="$CL_DIR:$PATH"
+          echo "Using CL=$CL_BIN"
+          echo "Using LINK=$(command -v link.exe || true)"
+          WIN_PYTHON="$(command -v python.exe || true)"
+          case "$WIN_PYTHON" in
+            ""|/usr/bin/*|/mingw*/*)
+              for candidate in /c/hostedtoolcache/windows/Python/*/x64/python.exe /c/Python*/python.exe; do
+                [ -x "$candidate" ] || continue
+                WIN_PYTHON="$candidate"
+                break
+              done
+              ;;
+          esac
+          [ -n "$WIN_PYTHON" ] && [ -x "$WIN_PYTHON" ] || (echo "Windows python.exe not found" && exit 1)
+          export PYTHON_FOR_BUILD="$WIN_PYTHON"
+          export PYTHON="$WIN_PYTHON"
+          unset UCRTVersion
+          "$WIN_PYTHON" --version
+          echo "Using PYTHON_FOR_BUILD=$PYTHON_FOR_BUILD"
+          echo "TARGET_ARCH=$TARGET_ARCH (cross-compiling for ARM64)"
+          # NASM is needed for the x64 cross-toolset (OpenSSL x64 build)
+          NASM_BIN="$(command -v nasm || command -v nasm.exe || true)"
+          [ -n "$NASM_BIN" ] || (echo "nasm not found in PATH" && exit 1)
+          export NASM="$NASM_BIN"
+          echo "Using NASM=$NASM"
+          "$NASM" -v
+          export NPROC=4
+          export LO_SRC_DIR=/d/lo-src
+          export OUTPUT_DIR=/d/a/${{ github.event.repository.name }}/${{ github.event.repository.name }}/output
+          ./scripts/build.sh
+
+      - name: Dump ICU config.log (failure)
+        if: failure()
+        shell: msys2 {0}
+        run: |
+          ICU_LOG="/d/lo-src/workdir/UnpackedTarball/icu/source/config.log"
+          if [ -f "$ICU_LOG" ]; then
+            echo "Found $ICU_LOG"
+            tail -n 200 "$ICU_LOG"
+          else
+            echo "ICU config.log not found: $ICU_LOG"
+          fi
+
+      - name: Dump NSPR config.log (failure)
+        if: failure()
+        shell: msys2 {0}
+        run: |
+          NSPR_LOG="/d/lo-src/workdir/UnpackedTarball/nss/nspr/out/config.log"
+          if [ -f "$NSPR_LOG" ]; then
+            echo "Found $NSPR_LOG"
+            tail -n 200 "$NSPR_LOG"
+          else
+            echo "NSPR config.log not found: $NSPR_LOG"
+          fi
+
+      - name: Dump NSS build.log (failure)
+        if: failure()
+        shell: msys2 {0}
+        run: |
+          NSS_BUILD_LOG="/d/lo-src/workdir/UnpackedTarball/nss/build.log"
+          if [ -f "$NSS_BUILD_LOG" ]; then
+            echo "Found $NSS_BUILD_LOG"
+            tail -n 200 "$NSS_BUILD_LOG"
+          else
+            echo "NSS build.log not found: $NSS_BUILD_LOG"
+          fi
+
+      - name: Dump HarfBuzz meson-log.txt (failure)
+        if: failure()
+        shell: msys2 {0}
+        run: |
+          HB_MESON_LOG="/d/lo-src/workdir/UnpackedTarball/harfbuzz/builddir/meson-logs/meson-log.txt"
+          if [ -f "$HB_MESON_LOG" ]; then
+            echo "Found $HB_MESON_LOG"
+            tail -n 200 "$HB_MESON_LOG"
+          else
+            echo "HarfBuzz meson-log.txt not found: $HB_MESON_LOG"
+          fi
+
+      - name: Upload ICU config.log (failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: icu-config-log-arm64
+          path: D:\lo-src\workdir\UnpackedTarball\icu\source\config.log
+          if-no-files-found: warn
+
+      - name: Upload NSPR config.log (failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nspr-config-log-arm64
+          path: D:\lo-src\workdir\UnpackedTarball\nss\nspr\out\config.log
+          if-no-files-found: warn
+
+      - name: Upload HarfBuzz meson-log.txt (failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: harfbuzz-meson-log-arm64
+          path: D:\lo-src\workdir\UnpackedTarball\harfbuzz\builddir\meson-logs\meson-log.txt
+          if-no-files-found: warn
+
+      - name: Upload CI debug env (failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-ci-debug-env-arm64
+          path: D:\a\${{ github.event.repository.name }}\${{ github.event.repository.name }}\.ci-debug\*
+          if-no-files-found: warn
+
+      - name: Upload external build logs (failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-external-build-logs-arm64
+          path: |
+            D:\lo-src\workdir\UnpackedTarball\nss\build.log
+            D:\lo-src\workdir\ExternalProject\nss\build.log
+            D:\lo-src\workdir\UnpackedTarball\icu\source\build.log
+            D:\lo-src\workdir\UnpackedTarball\harfbuzz\builddir\meson-logs\meson-log.txt
+          if-no-files-found: warn
+
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: slimlo-win-arm64
+          path: output/
+          retention-days: 30
