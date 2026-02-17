@@ -80,12 +80,18 @@ wrap_optional DBCONNECTIVITY frm
 
 # AVMEDIA on WNT: avmediawin is guarded by AVMEDIA in Repository.mk
 # but unconditional in merged list for WNT.
+# The entry is $(if $(filter WNT,$(OS)),avmediawin) — use grep -F for
+# literal matching (regex $ anchors break the pattern).
 echo "    --- AVMEDIA/WNT guard ---"
 if grep -q 'gb_Helper_optional,AVMEDIA,.*avmediawin' "$MERGED"; then
     echo "    avmediawin already patched (skipping)"
-elif grep -q '\$(if $(filter WNT,$(OS)),avmediawin)' "$MERGED"; then
-    sed 's/$(if $(filter WNT,$(OS)),avmediawin)/$(call gb_Helper_optional,AVMEDIA,$(if $(filter WNT,$(OS)),avmediawin))/' \
-        "$MERGED" > "$MERGED.tmp" && mv "$MERGED.tmp" "$MERGED"
+elif grep -qF '$(if $(filter WNT,$(OS)),avmediawin)' "$MERGED"; then
+    awk '{
+        old = "$(if $(filter WNT,$(OS)),avmediawin)"
+        new = "$(call gb_Helper_optional,AVMEDIA,$(if $(filter WNT,$(OS)),avmediawin))"
+        gsub(old, new)
+        print
+    }' "$MERGED" > "$MERGED.tmp" && mv "$MERGED.tmp" "$MERGED"
     echo "    Wrapped: avmediawin (optional on AVMEDIA)"
 else
     wrap_optional AVMEDIA avmediawin
@@ -99,11 +105,16 @@ wrap_exclude ENABLE_SLIMLO xsltfilter
 
 # ENABLE_SLIMLO: embedserv module is stripped by patch 002,
 # so emser must not stay in the merged list on Windows.
+# Same grep -F fix as avmediawin above.
 if grep -q 'ENABLE_SLIMLO.*emser' "$MERGED"; then
     echo "    emser already patched (skipping)"
-elif grep -q '\$(if $(filter WNT,$(OS)),emser)' "$MERGED"; then
-    sed 's/$(if $(filter WNT,$(OS)),emser)/$(if $(ENABLE_SLIMLO),,$(if $(filter WNT,$(OS)),emser))/' \
-        "$MERGED" > "$MERGED.tmp" && mv "$MERGED.tmp" "$MERGED"
+elif grep -qF '$(if $(filter WNT,$(OS)),emser)' "$MERGED"; then
+    awk '{
+        old = "$(if $(filter WNT,$(OS)),emser)"
+        new = "$(if $(ENABLE_SLIMLO),,$(if $(filter WNT,$(OS)),emser))"
+        gsub(old, new)
+        print
+    }' "$MERGED" > "$MERGED.tmp" && mv "$MERGED.tmp" "$MERGED"
     echo "    Wrapped: emser (exclude when ENABLE_SLIMLO)"
 else
     wrap_exclude ENABLE_SLIMLO emser
