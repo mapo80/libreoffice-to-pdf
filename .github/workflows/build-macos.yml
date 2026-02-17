@@ -30,6 +30,7 @@ jobs:
           CCACHE_DIR: ~/Library/Caches/ccache
           CCACHE_COMPRESS: "1"
           CCACHE_MAXSIZE: 8G
+          SLIMLO_DEP_STEP: "7"
         run: |
           export NPROC=$(sysctl -n hw.ncpu)
           export LO_SRC_DIR=${{ runner.temp }}/lo-src

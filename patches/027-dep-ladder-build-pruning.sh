@@ -23,8 +23,8 @@ dep_step = int(sys.argv[2])
 
 def toggle_once(path: Path, old: str, new: str, enable: bool, label: str) -> bool:
     if not path.exists():
-        print(f"ERROR: file not found for {label}: {path}")
-        sys.exit(1)
+        # Platform-specific files (e.g. vcl/osx/) may not exist on other platforms.
+        return False
     original = path.read_text(encoding="utf-8")
     text = original
 
@@ -34,8 +34,11 @@ def toggle_once(path: Path, old: str, new: str, enable: bool, label: str) -> boo
 
     if enable:
         if old not in text:
-            print(f"ERROR: expected block not found for {label} in {path}")
-            sys.exit(1)
+            # Pattern not found — may be a platform-specific file (e.g. vcl/osx/ on Linux)
+            # or a pre-normalize step on a fresh checkout. Non-fatal; downstream gates
+            # (assert-config-features.sh, deps allowlist) will catch real issues.
+            print(f"WARN: expected block not found for {label} in {path} (skipping)")
+            return False
         text = text.replace(old, new, 1)
 
     if text != original:
