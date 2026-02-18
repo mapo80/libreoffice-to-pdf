@@ -49,6 +49,10 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+      - name: Remove symlinks before upload
+        if: success()
+        run: find output -type l -delete
+
       - uses: actions/upload-artifact@v4
         if: success()
         with:
