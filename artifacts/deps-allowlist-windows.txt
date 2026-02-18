@@ -1,5 +1,0 @@
-# SlimLO DOCX aggressive runtime dependency allowlist (Windows)
-# Patterns are shell globs matched against dependency names from dumpbin.
-# Keep this list intentionally broad until Windows dependency-floor tuning is complete.
-
-*.DLL
