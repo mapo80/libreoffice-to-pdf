@@ -1,0 +1,85 @@
+name: "Test NuGet: Windows arm64"
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to test (e.g., v0.1.0)'
+        required: true
+        type: string
+
+jobs:
+  test:
+    runs-on: windows-2022
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+          else
+            TAG="${{ inputs.tag }}"
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Download NuGet packages from release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p nupkgs
+          gh release download "${{ steps.version.outputs.tag }}" \
+            --pattern '*.nupkg' \
+            --dir nupkgs/
+          ls -lh nupkgs/
+
+      - name: Configure local NuGet source
+        shell: bash
+        run: |
+          cat > example/nuget.config << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <configuration>
+            <packageSources>
+              <clear />
+              <add key="local" value="../nupkgs" />
+              <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+            </packageSources>
+          </configuration>
+          EOF
+
+      # Build-only: no Windows arm64 runner available for execution
+      - name: Build example project (build-only, no arm64 runner)
+        run: |
+          dotnet publish example/Example.csproj `
+            -c Release -r win-arm64 --no-self-contained `
+            -p:SlimLOVersion=${{ steps.version.outputs.version }} `
+            -o $env:RUNNER_TEMP\app
+
+      - name: Verify native assets were resolved
+        shell: pwsh
+        run: |
+          $programDir = "$env:RUNNER_TEMP\app\program"
+          if (-not (Test-Path $programDir)) {
+            Write-Error "FAIL: program/ directory not found — native assets not resolved"
+            exit 1
+          }
+          $fileCount = (Get-ChildItem -Recurse $programDir -File).Count
+          Write-Output "Native assets resolved: $fileCount files in program/"
+          if ($fileCount -lt 10) {
+            Write-Error "FAIL: Too few native files ($fileCount), expected at least 10"
+            exit 1
+          }
+          Write-Output "PASS: Build succeeded with ARM64 native assets ($fileCount files)"

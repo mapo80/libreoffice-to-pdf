@@ -1,4 +1,4 @@
-name: Build Linux x64
+name: "Native Build: Linux x64"
 
 on:
   pull_request:

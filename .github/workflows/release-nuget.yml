@@ -1,0 +1,121 @@
+name: "Release: Pack & Publish NuGet"
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Package version (e.g., 0.1.0, 0.2.0-preview.1)'
+        required: true
+        type: string
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Download native artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          ARTIFACTS=(
+            "slimlo-linux-x64:native/linux-x64"
+            "slimlo-linux-arm64:native/linux-arm64"
+            "slimlo-osx-arm64:native/osx-arm64"
+            "slimlo-osx-x64:native/osx-x64"
+            "slimlo-win-x64:native/win-x64"
+            "slimlo-win-arm64:native/win-arm64"
+          )
+
+          for entry in "${ARTIFACTS[@]}"; do
+            artifact="${entry%%:*}"
+            dest="${entry##*:}"
+            echo "=== Downloading $artifact → $dest ==="
+            mkdir -p "$dest"
+            gh run download \
+              --name "$artifact" \
+              --dir "$dest" \
+              -R "${{ github.repository }}"
+          done
+
+          echo ""
+          echo "=== Downloaded artifacts ==="
+          for d in native/*/; do
+            echo "$d: $(find "$d" -type f | wc -l) files"
+          done
+
+      - name: Pack NuGet packages
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          # Pack Linux (produces SlimLO managed + SlimLO.NativeAssets.Linux)
+          ./scripts/pack-nuget.sh linux \
+            "$(pwd)/native/linux-x64/" \
+            "$(pwd)/native/linux-arm64/"
+
+          # Pack macOS (SlimLO.NativeAssets.macOS only)
+          dotnet pack dotnet/SlimLO.NativeAssets.macOS/SlimLO.NativeAssets.macOS.csproj \
+            -c Release \
+            -o dotnet/nupkgs \
+            -p:Version="$VERSION" \
+            -p:NativeDir_arm64="$(pwd)/native/osx-arm64/" \
+            -p:NativeDir_x64="$(pwd)/native/osx-x64/"
+
+          # Pack Windows (SlimLO.NativeAssets.Windows only)
+          dotnet pack dotnet/SlimLO.NativeAssets.Windows/SlimLO.NativeAssets.Windows.csproj \
+            -c Release \
+            -o dotnet/nupkgs \
+            -p:Version="$VERSION" \
+            -p:NativeDir_x64="$(pwd)/native/win-x64/" \
+            -p:NativeDir_arm64="$(pwd)/native/win-arm64/"
+
+          echo ""
+          echo "=== Packages ==="
+          ls -lh dotnet/nupkgs/*.nupkg
+
+      - name: Verify packages
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          expected=(
+            "SlimLO.$VERSION.nupkg"
+            "SlimLO.NativeAssets.Linux.$VERSION.nupkg"
+            "SlimLO.NativeAssets.macOS.$VERSION.nupkg"
+            "SlimLO.NativeAssets.Windows.$VERSION.nupkg"
+          )
+          for pkg in "${expected[@]}"; do
+            if [ ! -f "dotnet/nupkgs/$pkg" ]; then
+              echo "MISSING: $pkg"
+              exit 1
+            fi
+            echo "OK: $pkg ($(stat -c%s "dotnet/nupkgs/$pkg") bytes)"
+          done
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          TAG="v$VERSION"
+
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
+
+          gh release create "$TAG" \
+            --title "SlimLO $TAG" \
+            --generate-notes \
+            dotnet/nupkgs/*.nupkg

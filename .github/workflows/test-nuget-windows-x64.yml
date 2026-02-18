@@ -1,0 +1,89 @@
+name: "Test NuGet: Windows x64"
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to test (e.g., v0.1.0)'
+        required: true
+        type: string
+
+jobs:
+  test:
+    runs-on: windows-2022
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+          else
+            TAG="${{ inputs.tag }}"
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Download NuGet packages from release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p nupkgs
+          gh release download "${{ steps.version.outputs.tag }}" \
+            --pattern '*.nupkg' \
+            --dir nupkgs/
+          ls -lh nupkgs/
+
+      - name: Configure local NuGet source
+        shell: bash
+        run: |
+          cat > example/nuget.config << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <configuration>
+            <packageSources>
+              <clear />
+              <add key="local" value="../nupkgs" />
+              <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+            </packageSources>
+          </configuration>
+          EOF
+
+      - name: Publish example project
+        run: |
+          dotnet publish example/Example.csproj `
+            -c Release -r win-x64 --no-self-contained `
+            -p:SlimLOVersion=${{ steps.version.outputs.version }} `
+            -o $env:RUNNER_TEMP\app
+
+      - name: Run DOCX to PDF conversion
+        run: |
+          dotnet $env:RUNNER_TEMP\app\Example.dll `
+            tests\fixtures\rich_formatting.docx $env:RUNNER_TEMP\output.pdf
+
+      - name: Verify PDF output
+        shell: pwsh
+        run: |
+          $pdfPath = "$env:RUNNER_TEMP\output.pdf"
+          if (-not (Test-Path $pdfPath)) {
+            Write-Error "FAIL: output.pdf not created"
+            exit 1
+          }
+          $size = (Get-Item $pdfPath).Length
+          Write-Output "PDF size: $size bytes"
+          if ($size -lt 1000) {
+            Write-Error "FAIL: PDF too small ($size bytes)"
+            exit 1
+          }
+          Write-Output "PASS: PDF created successfully ($size bytes)"

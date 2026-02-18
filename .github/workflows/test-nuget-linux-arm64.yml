@@ -1,0 +1,96 @@
+name: "Test NuGet: Linux arm64"
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to test (e.g., v0.1.0)'
+        required: true
+        type: string
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+          else
+            TAG="${{ inputs.tag }}"
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libfontconfig1 libfreetype6 libexpat1 libcairo2 libpng16-16 \
+            libjpeg-turbo8 libxml2 libxslt1.1 libicu74 libnss3 libnspr4 \
+            locales
+          sudo sed -i '/en_US.UTF-8/s/^# //' /etc/locale.gen
+          sudo locale-gen
+
+      - name: Download NuGet packages from release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p nupkgs
+          gh release download "${{ steps.version.outputs.tag }}" \
+            --pattern '*.nupkg' \
+            --dir nupkgs/
+          ls -lh nupkgs/
+
+      - name: Configure local NuGet source
+        run: |
+          cat > example/nuget.config << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <configuration>
+            <packageSources>
+              <clear />
+              <add key="local" value="../nupkgs" />
+              <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+            </packageSources>
+          </configuration>
+          EOF
+
+      - name: Publish example project
+        run: |
+          dotnet publish example/Example.csproj \
+            -c Release -r linux-arm64 --no-self-contained \
+            -p:SlimLOVersion=${{ steps.version.outputs.version }} \
+            -o /tmp/app
+
+      - name: Run DOCX to PDF conversion
+        env:
+          LANG: en_US.UTF-8
+        run: |
+          dotnet /tmp/app/Example.dll \
+            tests/fixtures/rich_formatting.docx /tmp/output.pdf
+
+      - name: Verify PDF output
+        run: |
+          if [ ! -f /tmp/output.pdf ]; then
+            echo "FAIL: output.pdf not created"
+            exit 1
+          fi
+          SIZE=$(stat -c%s /tmp/output.pdf)
+          echo "PDF size: $SIZE bytes"
+          if [ "$SIZE" -lt 1000 ]; then
+            echo "FAIL: PDF too small ($SIZE bytes)"
+            exit 1
+          fi
+          echo "PASS: PDF created successfully ($SIZE bytes)"

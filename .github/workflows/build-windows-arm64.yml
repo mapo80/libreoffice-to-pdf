@@ -1,4 +1,4 @@
-name: Build Windows ARM64
+name: "Native Build: Windows ARM64"
 
 on:
   pull_request:
