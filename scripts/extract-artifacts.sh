@@ -44,12 +44,14 @@ case "$(uname -s)" in
         ;;
 esac
 
-remove_program_library_variants() {
+# Remove a library by its LO base name (e.g., "sclo", "mwaw-0.3-lo").
+# Linux/macOS: lib<name>.so/.dylib; Windows: <name>.dll (no lib prefix).
+remove_lib() {
     local name="$1"
-    rm -f "$OUTPUT_DIR/program/${name}.so"
-    rm -f "$OUTPUT_DIR/program/${name}.so."*
-    rm -f "$OUTPUT_DIR/program/${name}.dylib"
-    rm -f "$OUTPUT_DIR/program/${name}.dylib."*
+    rm -f "$OUTPUT_DIR/program/lib${name}.so"
+    rm -f "$OUTPUT_DIR/program/lib${name}.so."*
+    rm -f "$OUTPUT_DIR/program/lib${name}.dylib"
+    rm -f "$OUTPUT_DIR/program/lib${name}.dylib."*
     rm -f "$OUTPUT_DIR/program/${name}.dll"
 }
 
@@ -230,26 +232,24 @@ done
 # -----------------------------------------------------------
 echo "  Removing non-essential libraries..."
 for lib in \
-    libsclo libsdlo libscfiltlo libslideshowlo libscdlo libsddlo \
-    libPresentationMinimizerlo \
-    libcuilo \
-    libswuilo libscuilo libsduilo libdeploymentguilo \
-    libvbaobjlo libvbaswobjlo \
-    liblocaledata_others liblocaledata_euro liblocaledata_es \
-    libsmlo libsmdlo \
-    libbiblo \
-    libanalysislo libdatelo libpricinglo libsolverlo \
-    libucpdav1 libcmdmaillo \
-    libmigrationoo2lo libmigrationoo3lo \
-    libabplo libLanguageToollo libscnlo \
-    libtextconversiondlgslo libanimcorelo libicglo \
-    libmsformslo libscriptframe libdlgprovlo libunopkgapp \
-    libprotocolhandlerlo libnamingservicelo libproxyfaclo liblog_uno_uno \
-    libxmlsecurity \
+    sclo sdlo scfiltlo slideshowlo scdlo sddlo \
+    PresentationMinimizerlo \
+    cuilo \
+    swuilo scuilo sduilo deploymentguilo \
+    vbaobjlo vbaswobjlo \
+    localedata_others localedata_euro localedata_es \
+    smlo smdlo \
+    biblo \
+    analysislo datelo pricinglo solverlo \
+    ucpdav1 cmdmaillo \
+    migrationoo2lo migrationoo3lo \
+    abplo LanguageToollo scnlo \
+    textconversiondlgslo animcorelo icglo \
+    msformslo scriptframe dlgprovlo unopkgapp \
+    protocolhandlerlo namingservicelo proxyfaclo log_uno_uno \
+    xmlsecurity \
 ; do
-    rm -f "$OUTPUT_DIR/program/${lib}.so"
-    rm -f "$OUTPUT_DIR/program/${lib}.dylib"
-    rm -f "$OUTPUT_DIR/program/${lib}.dll"
+    remove_lib "$lib"
 done
 
 # -----------------------------------------------------------
@@ -294,7 +294,8 @@ rm -rf "$OUTPUT_DIR/share/liblangtag"
 rm -f "$OUTPUT_DIR/program/liblangtag"
 # RDF/Redland stack — S07 guards all RDF-consuming code in merged lib.
 # libunordflo is the sole consumer; services.rdb cleaning handles component removal.
-for extlib in "librdf-lo*" "libraptor2-lo*" "librasqal-lo*" "libunordflo*"; do
+for extlib in "librdf-lo*" "libraptor2-lo*" "librasqal-lo*" "libunordflo*" \
+              "rdf-lo*" "raptor2-lo*" "rasqal-lo*" "unordflo*"; do
     rm -f "$OUTPUT_DIR/program/"$extlib
 done
 
@@ -330,14 +331,14 @@ echo "  Applying DOCX aggressive pruning profile..."
 # Additional runtime libraries validated for DOCX-only conversion.
 # NOTE: libsoftokn3/libfreebl3 are intentionally kept (probe-rejected).
 for lib in \
-    libmswordlo libcached1 libgraphicfilterlo libfps_aqualo \
-    libnssckbi libnssdbm3 libssl3 \
-    libnet_uno libmacbe1lo libintrospectionlo libinvocationlo \
-    libinvocadaptlo libreflectionlo libunsafe_uno_uno libaffine_uno_uno \
-    libbinaryurplo libbootstraplo libiolo libloglo libstoragefdlo \
-    libtllo libucbhelper libucppkg1 libsal_textenc libsal_textenclo \
+    mswordlo cached1 graphicfilterlo fps_aqualo \
+    nssckbi nssdbm3 ssl3 \
+    net_uno macbe1lo introspectionlo invocationlo \
+    invocadaptlo reflectionlo unsafe_uno_uno affine_uno_uno \
+    binaryurplo bootstraplo iolo loglo storagefdlo \
+    tllo ucbhelper ucppkg1 sal_textenc sal_textenclo \
 ; do
-    remove_program_library_variants "$lib"
+    remove_lib "$lib"
 done
 
 # UI/config modules not needed in headless DOCX-only mode.
