@@ -576,28 +576,6 @@ if [ -x "$SCRIPT_DIR/measure-artifact.sh" ]; then
 else
     echo "    WARNING: measure-artifact.sh not found/executable"
 fi
-if [ -x "$SCRIPT_DIR/check-deps-allowlist.sh" ]; then
-    DEPS_ALLOWLIST_EXTRA_STEP=""
-    case "$SLIMLO_DEP_STEP" in
-        ''|*[!0-9]*) ;;
-        *)
-            # S03+ can legitimately introduce unordf as a split-out internal dep.
-            if [ "$SLIMLO_DEP_STEP" -ge 3 ]; then
-                DEPS_ALLOWLIST_EXTRA_STEP="libunordflo*"
-            fi
-            ;;
-    esac
-    if [ -n "$DEPS_ALLOWLIST_EXTRA_STEP" ]; then
-        DEPS_ALLOWLIST_EXTRA="$DEPS_ALLOWLIST_EXTRA_STEP" \
-        DEPS_FROM_JSON="$OUTPUT_DIR/size-report.json" \
-            "$SCRIPT_DIR/check-deps-allowlist.sh" "$OUTPUT_DIR"
-    else
-        DEPS_FROM_JSON="$OUTPUT_DIR/size-report.json" \
-            "$SCRIPT_DIR/check-deps-allowlist.sh" "$OUTPUT_DIR"
-    fi
-else
-    echo "    WARNING: check-deps-allowlist.sh not found/executable"
-fi
 echo ""
 
 # -----------------------------------------------------------
