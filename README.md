@@ -7,14 +7,15 @@
 [![Build macOS arm64](https://github.com/mapo80/libreoffice-to-pdf/actions/workflows/build-macos.yml/badge.svg)](https://github.com/mapo80/libreoffice-to-pdf/actions/workflows/build-macos.yml)
 [![Build macOS x64](https://github.com/mapo80/libreoffice-to-pdf/actions/workflows/build-macos-x64.yml/badge.svg)](https://github.com/mapo80/libreoffice-to-pdf/actions/workflows/build-macos-x64.yml)
 [![Build Windows x64](https://github.com/mapo80/libreoffice-to-pdf/actions/workflows/build-windows.yml/badge.svg)](https://github.com/mapo80/libreoffice-to-pdf/actions/workflows/build-windows.yml)
+[![Build Windows ARM64](https://github.com/mapo80/libreoffice-to-pdf/actions/workflows/build-windows-arm64.yml/badge.svg)](https://github.com/mapo80/libreoffice-to-pdf/actions/workflows/build-windows-arm64.yml)
 
-SlimLO is **not a fork**. It applies idempotent patch scripts to vanilla LibreOffice source, making it trivial to track upstream releases. The result is a single merged library (LTO-optimized) plus a thin C wrapper — a fully self-contained artifact ready for server-side document conversion.
+SlimLO is **not a fork** — it applies 30 idempotent patch scripts to vanilla LibreOffice source, making it trivial to track upstream releases. The build pipeline strips LibreOffice down to its Writer engine and OOXML-to-PDF conversion path, merges everything into a single LTO-optimized shared library, and exposes it through three SDKs: .NET (async, process-isolated, crash-resilient), Java (sync + async, same worker pool architecture), and a direct C API. The result is a fully self-contained artifact for server-side document conversion — no GUI, no scripting runtime, no database layer, no Java/Python — just the minimal engine needed to turn DOCX into PDF.
 
 | | |
 |---|---|
-| **Platforms** | Linux x64/arm64 · macOS arm64/x64 · Windows x64 |
-| **Artifact size (always-aggressive)** | ~134 MB (macOS local, `2026-02-15`) |
-| **Merged lib** | ~65 MB `.dylib` (macOS local, stripped) |
+| **Platforms** | Linux x64/arm64 · macOS arm64/x64 · Windows x64/ARM64 |
+| **Artifact size** | ~97 MB (macOS arm64) · ~186 MB (Linux x64) |
+| **Merged lib** | ~62 MB `.dylib` (macOS arm64, LTO) · ~98 MB `.so` (Linux x64, LTO) |
 | **LO version** | `libreoffice-25.8.5.1` |
 | **.NET tests** | 195 passing (net8.0 + net6.0) |
 | **Java tests** | 38 passing |
@@ -52,15 +53,15 @@ SlimLO strips LibreOffice down to its Writer engine + UNO + DOCX/PDF conversion 
                                      │
                        ┌─────────────┴──────────────┐
                        │ libmergedlo.{so,dylib,dll}  │
-                       │   ~65 MB · LTO · stripped   │
+                       │   ~62–98 MB · LTO · stripped │
                        │   Writer + UNO + filters    │
                        └─────────────────────────────┘
 ```
 
 **Key design decisions:**
 
-- **Patch-based, not a fork** — 22 patch scripts (including one post-autogen patch) modify vanilla LO source. No `git .patch` files — scripts are resilient to upstream line-number changes and easy to maintain across LO upgrades.
-- **Single merged library** — `--enable-mergelibs` + LTO combines hundreds of LO modules into one `libmergedlo`. Dead code elimination + aggressive stripping reduces 1.5 GB to ~134 MB extracted runtime (macOS local, always-aggressive profile).
+- **Patch-based, not a fork** — 30 idempotent patch scripts (including one post-autogen patch) modify vanilla LO source. No `git .patch` files — scripts are resilient to upstream line-number changes and easy to maintain across LO upgrades.
+- **Single merged library** — `--enable-mergelibs` + LTO combines hundreds of LO modules into one `libmergedlo`. Dead code elimination + aggressive stripping reduces 1.5 GB to ~97 MB extracted runtime (macOS arm64) or ~186 MB (Linux x64).
 - **Process isolation** (.NET / Java) — Each conversion runs in a separate native `slimlo_worker` process. LibreOffice crash on a malformed document kills only the worker, never the host application.
 - **Same worker, multiple SDKs** — Both .NET and Java SDKs spawn the same `slimlo_worker` binary and communicate via the same length-prefixed JSON IPC protocol over stdin/stdout pipes.
 
@@ -86,9 +87,12 @@ The .NET SDK provides a thread-safe, async API with process isolation, crash rec
     Condition="$([MSBuild]::IsOSPlatform('Linux'))" />
 <PackageReference Include="SlimLO.NativeAssets.macOS" Version="0.1.0"
     Condition="$([MSBuild]::IsOSPlatform('OSX'))" />
+<PackageReference Include="SlimLO.NativeAssets.Windows" Version="0.1.0"
+    Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
 ```
 
 > On Linux, the host must have system libraries installed. See [Linux system dependencies](#linux-system-dependencies).
+> On Windows, the [Visual C++ Redistributable 2022](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist) is required.
 
 ### Quick start
 
@@ -288,6 +292,10 @@ ENTRYPOINT ["dotnet", "MyApp.dll"]
 ### Deploying to macOS
 
 No additional system dependencies needed — macOS system frameworks suffice. The native assets NuGet package includes everything required.
+
+### Deploying to Windows
+
+Requires the [Visual C++ Redistributable 2022](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist). The `SlimLO.NativeAssets.Windows` NuGet package bundles the LibreOffice engine and worker for both x64 and ARM64. No additional system libraries needed.
 
 ### Environment variables
 
@@ -595,6 +603,10 @@ ENTRYPOINT ["java", "-jar", "myapp.jar"]
 
 No additional system dependencies needed — macOS system frameworks suffice. Set `SLIMLO_RESOURCE_PATH` to point to the extracted native assets.
 
+### Deploying to Windows (Java)
+
+Requires the [Visual C++ Redistributable 2022](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist). Extract the native assets and set `SLIMLO_RESOURCE_PATH`.
+
 ### Environment variables
 
 | Variable | Description |
@@ -747,7 +759,7 @@ docker run --rm -v $(pwd)/output:/output slimlo-build
 | `LO_SRC_DIR` | `./lo-src` | LO source directory (~2.5 GB) |
 | `OUTPUT_DIR` | `./output` | Artifact output directory |
 | `NPROC` | auto-detected | Build parallelism (`-jN`) |
-| `DOCX_AGGRESSIVE` | `1` | Always-aggressive profile (`1` only; `0` is rejected) |
+| `SLIMLO_DEP_STEP` | `0` | Dependency ladder step (`0`=base, `7`=maximum pruning) |
 
 ### Official Phase 2 flow
 
@@ -767,14 +779,14 @@ Use macOS for fast profile discovery, Linux via Docker for local compatibility v
 ### Build profile
 
 ```bash
-# Always-aggressive DOCX-only profile
-DOCX_AGGRESSIVE=1 ./scripts/build.sh
-
-# Equivalent (default)
+# Default build (base pruning)
 ./scripts/build.sh
+
+# Maximum pruning via dependency ladder (S07)
+SLIMLO_DEP_STEP=7 ./scripts/build.sh
 ```
 
-`build.sh` now enforces a post-configure hard gate via `scripts/assert-config-features.sh`. The build fails immediately if `config_host.mk` is not truly slim (for example `ENABLE_NSS=TRUE`, `ENABLE_CURL=TRUE`, `TLS=NSS`, or forbidden `BUILD_TYPE` tokens).
+`build.sh` enforces a post-configure hard gate via `scripts/assert-config-features.sh`. The build fails immediately if `config_host.mk` is not truly slim (for example `ENABLE_NSS=TRUE`, `ENABLE_CURL=TRUE`, `TLS=NSS`, or forbidden `BUILD_TYPE` tokens).
 
 ### Probe aggressive candidates
 
@@ -798,8 +810,8 @@ Related scripts:
 
 - `scripts/write-build-metadata.sh`
 - `scripts/measure-artifact.sh`
-- `scripts/check-deps-allowlist.sh`
 - `scripts/assert-config-features.sh`
+- `scripts/assert-merged-deps.sh`
 - `scripts/run-gate.sh`
 - `scripts/macos-ultra-matrix.sh`
 - `scripts/linux-docker-validate.sh`
@@ -877,14 +889,14 @@ This creates:
 
 ```
 output/
-├── program/           # ~132 MB (always-aggressive, macOS local)
-│   ├── libmergedlo.{so,dylib,dll}  # ~65 MB core engine (macOS local, LTO)
+├── program/           # ~90 MB (macOS arm64) · ~178 MB (Linux x64)
+│   ├── libmergedlo.{so,dylib,dll}  # ~62 MB (macOS) · ~98 MB (Linux), LTO + stripped
 │   ├── libslimlo.{so,dylib,dll}    # C API wrapper
 │   ├── slimlo_worker               # IPC worker process
-│   ├── lib*.{so,dylib}             # UNO, ICU, externals, stubs
+│   ├── lib*.{so,dylib}             # UNO, ICU, externals
 │   ├── sofficerc                   # Bootstrap RC chain
 │   └── types/offapi.rdb            # UNO type registry
-├── share/             # ~2.5 MB (always-aggressive, macOS local)
+├── share/             # ~7 MB
 │   ├── registry/*.xcd
 │   ├── config/soffice.cfg/
 │   └── filter/
@@ -957,6 +969,16 @@ makefiles             →  $(if $(ENABLE_SLIMLO),,target)   # exclude targets
 | `018-fix-icu-windows-configure-flags.sh` | Fixes ICU-related Windows configure flags. |
 | `019-strip-windows-atl-targets.sh` | Removes unneeded ATL-linked Windows targets. |
 | `020-fix-harfbuzz-meson-msvc-path.sh` | Fixes HarfBuzz Meson MSVC path handling. |
+| `021-support-vs2026.sh` | Adds Visual Studio 2026 (v18.x, toolset v145) support to `configure.ac`. |
+| `022-fix-external-patch-line-endings.sh` | Converts CRLF patch files to LF for MSVC `--binary` patch mode. |
+| `023-fix-opencl-guard-formulacell.sh` | Guards missing `HAVE_FEATURE_OPENCL` in Calc formula cell code. |
+| `024-fix-avmedia-guard-svdomedia.sh` | Guards missing `HAVE_FEATURE_AVMEDIA` for `PlayerListener` references. |
+| `025-fix-curl-guards.sh` | Ensures curl external is only referenced when `ENABLE_CURL` is active. |
+| `026-slimlo-merge-install-guards.sh` | Baseline merged-lib install guards for always-slim profile. |
+| `027-dep-ladder-build-pruning.sh` | Step-gated build-time pruning rules for dependency ladder (`SLIMLO_DEP_STEP`). |
+| `028-guard-xmlsec-uiconfig.sh` | Builds xmlsecurity UI config only when NSS or OpenSSL is enabled. |
+| `029-strip-external-xmlsec.sh` | Removes external xmlsec library (digital signatures) in SlimLO builds. |
+| `030-fix-basic-noscripting-stubs.sh` | Provides VBA helper stubs when scripting is disabled for merged linking. |
 
 ---
 
@@ -968,7 +990,7 @@ makefiles             →  $(if $(ENABLE_SLIMLO),,target)   # exclude targets
 |--------|----------|----------------|
 | `SlimLO.conf` | Linux | `--disable-gui` (headless SVP backend), disables GTK/Qt/dbus/gio/gstreamer |
 | `SlimLO-macOS.conf` | macOS | No `--disable-gui` (Quartz VCL), `--enable-bogus-pkg-config` for Homebrew |
-| `SlimLO-windows.conf` | Windows x64 | MSVC-oriented flags, OpenSSL TLS path, no GTK/Qt integrations |
+| `SlimLO-windows.conf` | Windows x64/ARM64 | MSVC-oriented flags, OpenSSL TLS path, no GTK/Qt integrations |
 
 All three share the DOCX-only hard-minimal direction: `--enable-slimlo`, `--enable-mergelibs`, `--enable-lto`, `--with-java=no`, `--disable-python`, `--disable-scripting`, `--disable-curl`, `--disable-nss`, `--with-tls=openssl`.
 
@@ -1001,37 +1023,34 @@ Full LibreOffice `instdir/` is **~1.5 GB**. SlimLO reduces it in three stages:
 
 ### Stage 1: Build-time stripping (1.5 GB -> ~300 MB)
 
-22 patch scripts conditionally exclude modules and fix platform-specific build edges (Linux/macOS/Windows). Disabled paths include DB tooling, Java/Python, desktop integration, and non-essential UI/runtime components. Everything merges into `libmergedlo` via `--enable-mergelibs`.
+30 idempotent patch scripts conditionally exclude modules and fix platform-specific build edges (Linux/macOS/Windows). Disabled paths include DB tooling, Java/Python, desktop integration, and non-essential UI/runtime components. Everything merges into `libmergedlo` via `--enable-mergelibs`.
 
-### Stage 2: Always-aggressive artifact pruning (~300 MB -> ~134 MB)
+### Stage 2: Artifact pruning (~300 MB -> ~97 MB)
 
-`extract-artifacts.sh` runs in always-aggressive DOCX-only mode (`DOCX_AGGRESSIVE=1`) and removes runtime files not needed for DOCX-to-PDF:
+`extract-artifacts.sh` removes runtime files not needed for DOCX-to-PDF conversion:
 
 - Non-Writer modules and import backends
 - UI-only libraries/config packs
 - Unused XCD/runtime entries and helper executables
+- Stub shared libraries (21-byte merge placeholders)
+- RDF stack (removed via build-time guards at `SLIMLO_DEP_STEP >= 3`)
 
-### Stage 3: Probe-driven dependency floor and gate enforcement
+Additional pruning with `SLIMLO_DEP_STEP=7` (dependency ladder) strips external import libraries, digital signature support, and further optional components.
 
-- Candidate set validated by `scripts/prune-probe.sh` + `scripts/run-gate.sh`
-- Prune manifest: `artifacts/prune-manifest-docx-aggressive.txt`
-- Dependency allowlists:
-  - `artifacts/deps-allowlist-macos.txt`
-  - `artifacts/deps-allowlist-linux.txt`
-  - `artifacts/deps-allowlist-windows.txt`
-- Size/dependency reports generated by:
+### Stage 3: Validation and gate enforcement
+
+- Conversion smoke test via `scripts/run-gate.sh` (C API + optional .NET gate)
+- Dependency leak detection via `scripts/assert-merged-deps.sh`
+- Size and dependency reports:
   - `scripts/write-build-metadata.sh`
   - `scripts/measure-artifact.sh`
-  - `scripts/check-deps-allowlist.sh`
 
 ### What cannot be removed
 
 | Item | Why |
 |------|-----|
-| `.ui` files in `soffice.cfg/` | LOKit loads dialog definitions even in headless mode |
-| RDF stack (`librdf`, `libraptor2`, `librasqal`) | Called at runtime for DOCX-to-PDF |
-| Stub `.so` files (21 bytes each) | UNO checks file existence before merged lib fallback |
-| Bootstrap RC chain | Missing any link breaks UNO service loading |
+| Core `.ui` files in `soffice.cfg/` | LOKit loads framework dialog definitions even in headless mode (toolbar/menubar/statusbar `.ui` files can be removed) |
+| Bootstrap RC chain (`sofficerc` → `fundamentalrc` → `lounorc`) | Missing any link breaks UNO service loading |
 | `presets/` directory | Must exist (can be empty) or LOKit throws fatal error |
 
 ---
@@ -1094,24 +1113,27 @@ apk add --no-cache \
 │   ├── SlimLO.conf                # Linux configure flags
 │   ├── SlimLO-macOS.conf          # macOS configure flags
 │   └── SlimLO-windows.conf        # Windows configure flags (MSVC)
-├── patches/                       # 22+ patch scripts (+ post-autogen)
+├── patches/                       # 30 patch scripts + 1 post-autogen
 │   ├── 001..008-*.sh              # Core SlimLO build pruning/fixes
 │   ├── 009-*.postautogen          # Post-autogen link/LTO fix
-│   ├── 010..020-*.sh              # ICU/Windows/LOKit/platform fixes
-│   ├── 021-support-vs2026.sh      # Visual Studio 2026 support
-│   ├── 022-fix-external-patch-line-endings.sh  # CRLF→LF for MSVC
+│   ├── 010..022-*.sh              # ICU/Windows/LOKit/platform fixes
+│   ├── 023..030-*.sh              # Dep-ladder, guard fixes, stubs
 │   └── ...                        # See patch table above
 ├── scripts/
 │   ├── build.sh                   # Cross-platform build pipeline
 │   ├── apply-patches.sh           # Runs all patches in order
 │   ├── extract-artifacts.sh       # Artifact extraction + pruning
 │   ├── assert-config-features.sh  # Post-configure hard gate (feature truth)
+│   ├── assert-merged-deps.sh      # Dependency leak detection
+│   ├── macos-dep-ladder.sh        # macOS dep-ladder build orchestrator
 │   ├── macos-ultra-matrix.sh      # macOS discovery matrix (profile auto-selection)
 │   ├── linux-docker-validate.sh   # Linux validation via Docker (gate + deps + reports)
 │   ├── prepare-windows-handoff.sh # Windows manual signoff package generator
 │   ├── docker-build.sh            # Docker build orchestrator
 │   ├── pack-nuget.sh              # NuGet packaging
 │   ├── pack-maven.sh              # Maven packaging
+│   ├── bump-lo-version.sh         # Bump LO_VERSION and update patches
+│   ├── test-patches.sh            # Test patch idempotency
 │   ├── Start-WindowsBuild.ps1     # Windows: PowerShell build launcher
 │   ├── run-windows-build.bat      # Windows: Batch build launcher
 │   ├── setup-prerequisites.ps1    # Windows: Prerequisites installer
@@ -1133,9 +1155,10 @@ apk add --no-cache \
 │   │       ├── WorkerPool.cs      # Thread-safe pool
 │   │       ├── WorkerProcess.cs   # Worker lifecycle + IPC
 │   │       └── Protocol.cs        # Length-prefixed JSON framing
-│   ├── SlimLO.NativeAssets.Linux/ # Native NuGet (linux-x64 + arm64)
-│   ├── SlimLO.NativeAssets.macOS/ # Native NuGet (osx-arm64 + x64)
-│   └── SlimLO.Tests/             # 195 xUnit tests (net8.0 + net6.0)
+│   ├── SlimLO.NativeAssets.Linux/   # Native NuGet (linux-x64 + arm64)
+│   ├── SlimLO.NativeAssets.macOS/   # Native NuGet (osx-arm64 + x64)
+│   ├── SlimLO.NativeAssets.Windows/ # Native NuGet (win-x64 + arm64)
+│   └── SlimLO.Tests/               # 195 xUnit tests (net8.0 + net6.0)
 ├── java/
 │   ├── pom.xml                    # Parent POM (multi-module)
 │   ├── slimlo/                    # Java SDK (Java 8+, Gson)
@@ -1154,8 +1177,9 @@ apk add --no-cache \
 │   ├── build-linux-x64.yml       # CI: Linux x64 (Docker)
 │   ├── build-linux-arm64.yml     # CI: Linux arm64 (Docker)
 │   ├── build-macos.yml           # CI: macOS arm64
-│   ├── build-macos-x64.yml      # CI: macOS x64
-│   └── build-windows.yml         # CI: Windows x64 (MSYS2+MSVC)
+│   ├── build-macos-x64.yml       # CI: macOS x64
+│   ├── build-windows.yml         # CI: Windows x64 (MSYS2+MSVC)
+│   └── build-windows-arm64.yml   # CI: Windows ARM64 (MSYS2+MSVC cross)
 ├── example/                       # Example .NET console app
 └── tests/
     ├── test.sh                    # Native integration test
@@ -1183,6 +1207,7 @@ Release signoff policy for Phase 2:
 | [`build-macos.yml`](https://github.com/mapo80/libreoffice-to-pdf/actions/workflows/build-macos.yml) | `macos-14` (M1) | Native + ccache | 12h |
 | [`build-macos-x64.yml`](https://github.com/mapo80/libreoffice-to-pdf/actions/workflows/build-macos-x64.yml) | `macos-15-intel` | Native + ccache | 12h |
 | [`build-windows.yml`](https://github.com/mapo80/libreoffice-to-pdf/actions/workflows/build-windows.yml) | `windows-2022` | MSYS2 + MSVC | 12h |
+| [`build-windows-arm64.yml`](https://github.com/mapo80/libreoffice-to-pdf/actions/workflows/build-windows-arm64.yml) | `windows-2022` | MSYS2 + MSVC (`amd64_arm64` cross) | 12h |
 
 ---
 
