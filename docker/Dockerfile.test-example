@@ -1,5 +1,7 @@
-FROM --platform=linux/amd64 mcr.microsoft.com/dotnet/sdk:8.0-noble AS build
+ARG TARGETARCH=arm64
+FROM mcr.microsoft.com/dotnet/sdk:8.0-noble AS build
 
+ARG TARGETARCH
 WORKDIR /src
 
 # Copy NuGet packages
@@ -11,17 +13,22 @@ COPY example/ example/
 # Override nuget.config to use /nupkgs as local source
 RUN printf '<?xml version="1.0" encoding="utf-8"?>\n<configuration>\n  <packageSources>\n    <clear />\n    <add key="local" value="/nupkgs" />\n    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />\n  </packageSources>\n</configuration>\n' > example/nuget.config
 
-# Publish
-RUN dotnet publish example/Example.csproj -c Release -r linux-x64 --no-self-contained -o /app
+# Publish — use the target architecture's RID
+RUN DOTNET_RID="linux-$([ "$TARGETARCH" = "amd64" ] && echo x64 || echo $TARGETARCH)" && \
+    dotnet publish example/Example.csproj -c Release -r "$DOTNET_RID" --no-self-contained -o /app
 
 # Runtime — use Ubuntu-based image for system library support
-FROM --platform=linux/amd64 mcr.microsoft.com/dotnet/runtime:8.0-noble
+FROM mcr.microsoft.com/dotnet/runtime:8.0-noble
 
 # Install minimal runtime dependencies for LibreOffice
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libfontconfig1 libfreetype6 libexpat1 libcairo2 libpng16-16 \
     libjpeg-turbo8 libxml2 libxslt1.1 libicu74 libnss3 libnspr4 \
+    locales \
+    && sed -i '/en_US.UTF-8/s/^# //' /etc/locale.gen && locale-gen \
     && rm -rf /var/lib/apt/lists/*
+
+ENV LANG=en_US.UTF-8
 
 WORKDIR /app
 COPY --from=build /app .

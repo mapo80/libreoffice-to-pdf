@@ -341,13 +341,17 @@ for lib in \
 done
 
 # UI/config modules not needed in headless DOCX-only mode.
-for cfg in svx sfx vcl fps formula uui xmlsec; do
+# NOTE: sfx, svx, vcl must be KEPT — LOKit loads their .ui files even in headless mode.
+# Removing them causes "Unspecified Application Error" (DeploymentException) during conversion.
+for cfg in fps formula uui xmlsec; do
     rm -rf "$OUTPUT_DIR/share/config/soffice.cfg/$cfg"
 done
 
 # Remove filter data and selected registry entries not needed for DOCX->PDF.
 rm -rf "$OUTPUT_DIR/share/filter"
-rm -f "$OUTPUT_DIR/share/registry/Langpack-en-US.xcd"
+# Keep Langpack-en-US.xcd — it registers en-US as an installed locale.
+# Without it, Linux/Windows SetupL10N fails: "user interface language cannot be determined"
+# (macOS doesn't need it — locale is detected via CFLocale system API).
 rm -f "$OUTPUT_DIR/share/registry/ctl.xcd"
 rm -f "$OUTPUT_DIR/share/registry/graphicfilter.xcd"
 

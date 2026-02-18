@@ -1,0 +1,47 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <PropertyGroup>
+    <_SlimLORid_Windows Condition="'$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</_SlimLORid_Windows>
+    <_SlimLORid_Windows Condition="'$(_SlimLORid_Windows)' == ''">$(NETCoreSdkRuntimeIdentifier)</_SlimLORid_Windows>
+    <_SlimLORoot_Windows>$(MSBuildThisFileDirectory)../slimlo/$(_SlimLORid_Windows)/</_SlimLORoot_Windows>
+  </PropertyGroup>
+
+  <Target Name="_CopySlimLOAssets_Windows" AfterTargets="Build"
+          Condition="Exists('$(_SlimLORoot_Windows)program')">
+    <ItemGroup>
+      <_SlimLOProg_Windows Include="$(_SlimLORoot_Windows)program/**" />
+      <_SlimLOShare_Windows Include="$(_SlimLORoot_Windows)share/**" />
+      <_SlimLOPresets_Windows Include="$(_SlimLORoot_Windows)presets/**" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_SlimLOProg_Windows)"
+          DestinationFiles="@(_SlimLOProg_Windows->'$(OutDir)program/%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_SlimLOShare_Windows)"
+          DestinationFiles="@(_SlimLOShare_Windows->'$(OutDir)share/%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" Condition="'@(_SlimLOShare_Windows)' != ''" />
+    <Copy SourceFiles="@(_SlimLOPresets_Windows)"
+          DestinationFiles="@(_SlimLOPresets_Windows->'$(OutDir)presets/%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" Condition="'@(_SlimLOPresets_Windows)' != ''" />
+    <MakeDir Directories="$(OutDir)presets" />
+  </Target>
+
+  <Target Name="_PublishSlimLOAssets_Windows" AfterTargets="Publish"
+          Condition="Exists('$(_SlimLORoot_Windows)program')">
+    <ItemGroup>
+      <_SlimLOProgPub_Windows Include="$(_SlimLORoot_Windows)program/**" />
+      <_SlimLOSharePub_Windows Include="$(_SlimLORoot_Windows)share/**" />
+      <_SlimLOPresetsPub_Windows Include="$(_SlimLORoot_Windows)presets/**" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_SlimLOProgPub_Windows)"
+          DestinationFiles="@(_SlimLOProgPub_Windows->'$(PublishDir)program/%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_SlimLOSharePub_Windows)"
+          DestinationFiles="@(_SlimLOSharePub_Windows->'$(PublishDir)share/%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" Condition="'@(_SlimLOSharePub_Windows)' != ''" />
+    <Copy SourceFiles="@(_SlimLOPresetsPub_Windows)"
+          DestinationFiles="@(_SlimLOPresetsPub_Windows->'$(PublishDir)presets/%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" Condition="'@(_SlimLOPresetsPub_Windows)' != ''" />
+    <MakeDir Directories="$(PublishDir)presets" />
+  </Target>
+
+</Project>
