@@ -1,6 +1,7 @@
 # LibreOffice source (cloned at build time)
 lo-src/
 lo-src-clean/
+native/
 
 # Build output
 output/
