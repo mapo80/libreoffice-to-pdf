@@ -68,6 +68,11 @@ with open(sys.argv[1]) as f:
 deps = set()
 for file_deps in data.get("dependencies", {}).get("by_file", {}).values():
     for d in file_deps:
+        # Skip system deps (same filter as native gather_*_deps functions)
+        if d.startswith(("/usr/lib/", "/System/", "ld-linux", "linux-vdso")):
+            continue
+        if d.startswith(("API-MS-WIN", "EXT-MS-WIN", "api-ms-win", "ext-ms-win")):
+            continue
         deps.add(os.path.basename(d))
 for d in sorted(deps):
     print(d)
