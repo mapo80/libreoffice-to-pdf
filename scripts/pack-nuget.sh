@@ -43,13 +43,20 @@ case "$PLATFORM" in
             PACK_ARGS+=(-p:NativeDir_x64="$NATIVE_DIR_2")
         fi
         ;;
+    windows)
+        CSPROJ="$ROOT_DIR/dotnet/SlimLO.NativeAssets.Windows/SlimLO.NativeAssets.Windows.csproj"
+        PACK_ARGS=(-p:NativeDir_x64="$NATIVE_DIR_1")
+        if [ -n "$NATIVE_DIR_2" ]; then
+            PACK_ARGS+=(-p:NativeDir_arm64="$NATIVE_DIR_2")
+        fi
+        ;;
     *)
-        echo "Error: Unknown platform '$PLATFORM'. Supported: linux, macos"
+        echo "Error: Unknown platform '$PLATFORM'. Supported: linux, macos, windows"
         exit 1
         ;;
 esac
 
-PLATFORM_DISPLAY=$(echo "$PLATFORM" | sed 's/linux/Linux/;s/macos/macOS/')
+PLATFORM_DISPLAY=$(echo "$PLATFORM" | sed 's/linux/Linux/;s/macos/macOS/;s/windows/Windows/')
 
 echo ""
 echo "=== Packing SlimLO.NativeAssets.$PLATFORM_DISPLAY ==="

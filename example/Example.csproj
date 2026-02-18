@@ -11,6 +11,7 @@
     <PackageReference Include="SlimLO" Version="0.1.0" />
     <PackageReference Include="SlimLO.NativeAssets.Linux" Version="0.1.0" Condition="$([MSBuild]::IsOSPlatform('Linux'))" />
     <PackageReference Include="SlimLO.NativeAssets.macOS" Version="0.1.0" Condition="$([MSBuild]::IsOSPlatform('OSX'))" />
+    <PackageReference Include="SlimLO.NativeAssets.Windows" Version="0.1.0" Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
   </ItemGroup>
 
 </Project>
