@@ -21,11 +21,19 @@ NUPKG_DIR="$ROOT_DIR/dotnet/nupkgs"
 
 mkdir -p "$NUPKG_DIR"
 
+# Version override via VERSION env var (used by release workflow)
+VERSION_ARGS=()
+if [ -n "${VERSION:-}" ]; then
+    VERSION_ARGS=(-p:Version="$VERSION")
+    echo "Using version override: $VERSION"
+fi
+
 # ── Managed package ──────────────────────────────────────────────────
 echo "=== Packing SlimLO managed package ==="
 dotnet pack "$ROOT_DIR/dotnet/SlimLO/SlimLO.csproj" \
     -c Release \
-    -o "$NUPKG_DIR"
+    -o "$NUPKG_DIR" \
+    "${VERSION_ARGS[@]}"
 
 # ── Native assets package ────────────────────────────────────────────
 case "$PLATFORM" in
@@ -63,7 +71,8 @@ echo "=== Packing SlimLO.NativeAssets.$PLATFORM_DISPLAY ==="
 dotnet pack "$CSPROJ" \
     -c Release \
     -o "$NUPKG_DIR" \
-    "${PACK_ARGS[@]}"
+    "${PACK_ARGS[@]}" \
+    "${VERSION_ARGS[@]}"
 
 echo ""
 echo "=== Packages created ==="

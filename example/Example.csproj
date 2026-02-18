@@ -5,13 +5,14 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <SlimLOVersion Condition="'$(SlimLOVersion)' == ''">0.1.0</SlimLOVersion>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="SlimLO" Version="0.1.0" />
-    <PackageReference Include="SlimLO.NativeAssets.Linux" Version="0.1.0" Condition="$([MSBuild]::IsOSPlatform('Linux'))" />
-    <PackageReference Include="SlimLO.NativeAssets.macOS" Version="0.1.0" Condition="$([MSBuild]::IsOSPlatform('OSX'))" />
-    <PackageReference Include="SlimLO.NativeAssets.Windows" Version="0.1.0" Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
+    <PackageReference Include="SlimLO" Version="$(SlimLOVersion)" />
+    <PackageReference Include="SlimLO.NativeAssets.Linux" Version="$(SlimLOVersion)" Condition="$([MSBuild]::IsOSPlatform('Linux'))" />
+    <PackageReference Include="SlimLO.NativeAssets.macOS" Version="$(SlimLOVersion)" Condition="$([MSBuild]::IsOSPlatform('OSX'))" />
+    <PackageReference Include="SlimLO.NativeAssets.Windows" Version="$(SlimLOVersion)" Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
   </ItemGroup>
 
 </Project>

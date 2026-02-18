@@ -1,4 +1,4 @@
-name: Build macOS arm64
+name: "Native Build: macOS arm64"
 
 on:
   pull_request:
