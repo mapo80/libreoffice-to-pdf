@@ -3,6 +3,11 @@ name: "Test NuGet: Windows arm64"
 on:
   release:
     types: [published]
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       tag:
