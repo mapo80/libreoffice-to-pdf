@@ -122,3 +122,39 @@ jobs:
             --title "SlimLO $TAG" \
             --generate-notes \
             dotnet/nupkgs/*.nupkg
+
+  test-linux-x64:
+    needs: release
+    uses: ./.github/workflows/test-nuget-linux-x64.yml
+    with:
+      tag: v${{ inputs.version }}
+
+  test-linux-arm64:
+    needs: release
+    uses: ./.github/workflows/test-nuget-linux-arm64.yml
+    with:
+      tag: v${{ inputs.version }}
+
+  test-macos-arm64:
+    needs: release
+    uses: ./.github/workflows/test-nuget-macos-arm64.yml
+    with:
+      tag: v${{ inputs.version }}
+
+  test-macos-x64:
+    needs: release
+    uses: ./.github/workflows/test-nuget-macos-x64.yml
+    with:
+      tag: v${{ inputs.version }}
+
+  test-windows-x64:
+    needs: release
+    uses: ./.github/workflows/test-nuget-windows-x64.yml
+    with:
+      tag: v${{ inputs.version }}
+
+  test-windows-arm64:
+    needs: release
+    uses: ./.github/workflows/test-nuget-windows-arm64.yml
+    with:
+      tag: v${{ inputs.version }}
