@@ -10,10 +10,13 @@
     <PackageId>SlimLO.NativeAssets.Windows</PackageId>
     <Version>0.1.0</Version>
     <Authors>SlimLO Contributors</Authors>
-    <Description>Native Windows runtime for SlimLO PDF converter. Contains the LibreOffice headless engine, SlimLO C API, and worker process for x64 and arm64. Requires Visual C++ Redistributable 2022.</Description>
+    <Description>Native Windows runtime for SlimLO DOCX-to-PDF converter. Contains a minimal LibreOffice engine (mergedlo.dll), the SlimLO C API (slimlo.dll), and the slimlo_worker.exe process for x64 and ARM64. Built from vanilla LibreOffice source with 30 idempotent patch scripts that strip the engine to its Writer + UNO + PDF export path. Requires Visual C++ Redistributable 2022.</Description>
     <PackageLicenseExpression>MPL-2.0</PackageLicenseExpression>
     <PackageTags>pdf;conversion;libreoffice;native;windows</PackageTags>
     <RepositoryType>git</RepositoryType>
+    <RepositoryUrl>https://github.com/mapo80/libreoffice-to-pdf</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/mapo80/libreoffice-to-pdf</PackageProjectUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
     <NoWarn>NU5128;NU5100</NoWarn>
   </PropertyGroup>
 
@@ -41,6 +44,7 @@
   <ItemGroup>
     <None Include="build/SlimLO.NativeAssets.Windows.targets" Pack="true" PackagePath="build/" />
     <None Include="buildTransitive/SlimLO.NativeAssets.Windows.targets" Pack="true" PackagePath="buildTransitive/" />
+    <None Include="README.md" Pack="true" PackagePath="/" />
   </ItemGroup>
 
 </Project>

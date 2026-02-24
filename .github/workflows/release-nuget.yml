@@ -123,6 +123,22 @@ jobs:
             --generate-notes \
             dotnet/nupkgs/*.nupkg
 
+      - name: Push to NuGet.org
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          set -euo pipefail
+          for pkg in dotnet/nupkgs/*.nupkg; do
+            echo "Pushing $(basename "$pkg") to NuGet.org..."
+            dotnet nuget push "$pkg" \
+              --api-key "$NUGET_API_KEY" \
+              --source https://api.nuget.org/v3/index.json \
+              --skip-duplicate \
+              --timeout 600
+          done
+          echo ""
+          echo "=== All packages pushed to NuGet.org ==="
+
   test-linux-x64:
     needs: release
     uses: ./.github/workflows/test-nuget-linux-x64.yml

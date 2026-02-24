@@ -10,10 +10,13 @@
     <PackageId>SlimLO</PackageId>
     <Version>0.1.0</Version>
     <Authors>SlimLO Contributors</Authors>
-    <Description>Enterprise-grade PDF conversion library for DOCX documents. Process-isolated, thread-safe, with font diagnostics. Built on LibreOffice's rendering engine.</Description>
+    <Description>Managed .NET library for high-fidelity DOCX-to-PDF conversion. Provides a thread-safe, async API with process isolation, automatic crash recovery, and font substitution diagnostics. Each conversion runs in a separate native worker process — a LibreOffice crash never affects your application. Supports file-path, byte-buffer, and stream-based conversion. Targets netstandard2.0 (.NET Framework 4.6.1+) and net8.0. Requires a platform-specific SlimLO.NativeAssets package (Linux, macOS, or Windows).</Description>
     <PackageLicenseExpression>MPL-2.0</PackageLicenseExpression>
     <PackageTags>pdf;conversion;docx;libreoffice</PackageTags>
     <RepositoryType>git</RepositoryType>
+    <RepositoryUrl>https://github.com/mapo80/libreoffice-to-pdf</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/mapo80/libreoffice-to-pdf</PackageProjectUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <!-- Polyfill packages for .NET Standard 2.0 -->
@@ -33,6 +36,7 @@
   <ItemGroup>
     <None Include="build\SlimLO.targets" Pack="true" PackagePath="build\" />
     <None Include="buildTransitive\SlimLO.targets" Pack="true" PackagePath="buildTransitive\" />
+    <None Include="README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
 </Project>
