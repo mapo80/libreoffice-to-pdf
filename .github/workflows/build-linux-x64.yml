@@ -17,8 +17,10 @@ jobs:
         run: |
           # Remove large pre-installed packages to free disk/memory pressure
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache
-          # Add 14 GB swap file
-          sudo fallocate -l 14G /swapfile
+          # Add 14 GB swap file (dd instead of fallocate — fallocate fails on some GHA runners)
+          sudo swapoff /swapfile 2>/dev/null || true
+          sudo rm -f /swapfile
+          sudo dd if=/dev/zero of=/swapfile bs=1M count=14336
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
           sudo swapon /swapfile
