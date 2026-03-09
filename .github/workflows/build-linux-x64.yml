@@ -26,6 +26,7 @@ jobs:
           build-args: |
             SCRIPTS_HASH=${{ hashFiles('scripts/*.sh', 'patches/*.sh', 'patches/*.postautogen') }}
             SLIMLO_DEP_STEP=7
+            NPROC=2
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
