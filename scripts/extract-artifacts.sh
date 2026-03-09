@@ -69,6 +69,35 @@ find "$INSTDIR/$LIB_FOLDER" \( -name "*.so" -o -name "*.so.*" -o -name "*.dylib"
     -exec cp -a {} "$OUTPUT_DIR/program/" \;
 
 # -----------------------------------------------------------
+# 1b. Bundle system dependencies not present in minimal container images
+#     (e.g., mcr.microsoft.com/dotnet/aspnet:10.0, Azure App Service).
+#     libmergedlo.so links dynamically to fontconfig/freetype which are
+#     NOT in minimal images. Bundle them + transitive deps so the NuGet
+#     package is self-contained. RPATH=$ORIGIN is already set on
+#     slimlo_worker/libslimlo.so; we also set it on libmergedlo.so below.
+# -----------------------------------------------------------
+echo "  Bundling system dependencies..."
+case "$(uname -s)" in
+    Linux)
+        for syslib in libfontconfig.so.1 libfreetype.so.6 libpng16.so.16 \
+                       libexpat.so.1 libbrotlidec.so.1 libbrotlicommon.so.1; do
+            # Skip if already copied from instdir (LO may bundle its own version)
+            if [ -f "$OUTPUT_DIR/program/$syslib" ]; then
+                echo "    Already present: $syslib"
+                continue
+            fi
+            SYSLIB_PATH=$(ldconfig -p 2>/dev/null | grep -m1 "\\b${syslib}\\b" | awk '{print $NF}')
+            if [ -n "$SYSLIB_PATH" ] && [ -f "$SYSLIB_PATH" ]; then
+                cp -aL "$SYSLIB_PATH" "$OUTPUT_DIR/program/"
+                echo "    Bundled: $syslib (from $SYSLIB_PATH)"
+            else
+                echo "    WARNING: $syslib not found on build host"
+            fi
+        done
+        ;;
+esac
+
+# -----------------------------------------------------------
 # 2. UNO type and service registries (required for component loading)
 # -----------------------------------------------------------
 echo "  Copying UNO registries..."
@@ -394,6 +423,12 @@ case "$(uname -s)" in
                     echo "    Removed NEEDED + file: $needlib"
                 fi
             done
+            # Set RPATH so libmergedlo.so finds bundled deps (fontconfig, freetype, etc.)
+            CURRENT_RPATH=$(patchelf --print-rpath "$MERGEDSO_PRE" 2>/dev/null || true)
+            if [ -z "$CURRENT_RPATH" ] || ! echo "$CURRENT_RPATH" | grep -q '$ORIGIN'; then
+                patchelf --set-rpath '$ORIGIN' "$MERGEDSO_PRE"
+                echo "    Set RPATH=\$ORIGIN on libmergedlo.so"
+            fi
         else
             echo "    patchelf not available — skipping NEEDED removal"
         fi

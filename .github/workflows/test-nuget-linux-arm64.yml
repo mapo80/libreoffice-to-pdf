@@ -42,10 +42,9 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libfontconfig1 libfreetype6 libexpat1 libcairo2 libpng16-16 \
-            libjpeg-turbo8 libxml2 libxslt1.1 libicu74 libnss3 libnspr4 \
-            locales
+          # Native deps (fontconfig, freetype, cairo, etc.) are now bundled in the NuGet package.
+          # Only locales needed for en_US.UTF-8 setup.
+          sudo apt-get install -y --no-install-recommends locales
           sudo sed -i '/en_US.UTF-8/s/^# //' /etc/locale.gen
           sudo locale-gen
 
