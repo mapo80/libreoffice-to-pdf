@@ -79,6 +79,9 @@ find "$INSTDIR/$LIB_FOLDER" \( -name "*.so" -o -name "*.so.*" -o -name "*.dylib"
 echo "  Bundling system dependencies..."
 case "$(uname -s)" in
     Linux)
+        # Cache ldconfig output to avoid SIGPIPE with pipefail
+        # (grep -m1 exits early, breaking the pipe to ldconfig → exit 141)
+        LDCACHE=$(ldconfig -p 2>/dev/null || true)
         for syslib in libfontconfig.so.1 libfreetype.so.6 libpng16.so.16 \
                        libexpat.so.1 libbrotlidec.so.1 libbrotlicommon.so.1; do
             # Skip if already copied from instdir (LO may bundle its own version)
@@ -86,7 +89,7 @@ case "$(uname -s)" in
                 echo "    Already present: $syslib"
                 continue
             fi
-            SYSLIB_PATH=$(ldconfig -p 2>/dev/null | grep -m1 "\\b${syslib}\\b" | awk '{print $NF}')
+            SYSLIB_PATH=$(echo "$LDCACHE" | grep -m1 "\\b${syslib}\\b" | awk '{print $NF}')
             if [ -n "$SYSLIB_PATH" ] && [ -f "$SYSLIB_PATH" ]; then
                 cp -aL "$SYSLIB_PATH" "$OUTPUT_DIR/program/"
                 echo "    Bundled: $syslib (from $SYSLIB_PATH)"
