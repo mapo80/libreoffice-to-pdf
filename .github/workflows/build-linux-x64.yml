@@ -7,33 +7,11 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-16core
     timeout-minutes: 720
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Free disk space and add swap
-        run: |
-          # Remove large pre-installed packages to free disk space for swap
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache
-          sudo rm -rf /usr/share/swift /usr/local/share/powershell /usr/local/.ghcup
-          sudo rm -rf /usr/local/share/chromium /usr/local/share/edge_driver
-          sudo apt-get remove -y '^dotnet-.*' '^llvm-.*' 'php.*' azure-cli google-cloud-cli \
-            microsoft-edge-stable google-chrome-stable firefox mono-devel 2>/dev/null || true
-          sudo apt-get autoremove -y 2>/dev/null || true
-          echo "=== Disk space after cleanup ==="
-          df -h /
-          # Add 20 GB swap file (dd instead of fallocate — fallocate fails on some GHA runners)
-          # LTO linking of libmergedlo needs 12-16 GB; swap prevents OOM kill (exit 141)
-          sudo swapoff /swapfile 2>/dev/null || true
-          sudo rm -f /swapfile
-          sudo dd if=/dev/zero of=/swapfile bs=1M count=20480
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
-          echo "=== Memory after swap ==="
-          free -h
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -51,7 +29,7 @@ jobs:
           build-args: |
             SCRIPTS_HASH=${{ hashFiles('scripts/*.sh', 'patches/*.sh', 'patches/*.postautogen') }}
             SLIMLO_DEP_STEP=7
-            NPROC=2
+            NPROC=16
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
