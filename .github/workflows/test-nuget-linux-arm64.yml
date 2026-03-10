@@ -35,6 +35,8 @@ jobs:
           else
             TAG="${{ inputs.tag }}"
           fi
+          # Ensure v prefix for release download
+          [[ "$TAG" != v* ]] && TAG="v$TAG"
           VERSION="${TAG#v}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"

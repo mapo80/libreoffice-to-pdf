@@ -553,6 +553,19 @@ if [ -f "$PROJECT_DIR/slimlo-api/CMakeLists.txt" ] && command -v cmake >/dev/nul
     cp -a "$PROJECT_DIR/slimlo-api/build"/slimlo_worker.exe "$OUTPUT_DIR/program/" 2>/dev/null || true
     mkdir -p "$OUTPUT_DIR/include"
     cp "$PROJECT_DIR/slimlo-api/include/slimlo.h" "$OUTPUT_DIR/include/"
+    # Fix RPATH on macOS: replace stale build RPATHs with @loader_path
+    if [ "$PLATFORM" = "macos" ]; then
+        echo "    Fixing RPATH for macOS binaries..."
+        for bin in "$OUTPUT_DIR/program/slimlo_worker" "$OUTPUT_DIR/program"/libslimlo*.dylib; do
+            [ -f "$bin" ] || continue
+            # Remove stale build RPATHs
+            for rp in $(otool -l "$bin" | awk '/cmd LC_RPATH/{getline;getline;print $2}'); do
+                install_name_tool -delete_rpath "$rp" "$bin" 2>/dev/null || true
+            done
+            # Add @loader_path so libs are found in the same directory
+            install_name_tool -add_rpath @loader_path "$bin"
+        done
+    fi
     echo "    SlimLO C API built and copied to $OUTPUT_DIR/program/"
 elif [ -f "$PROJECT_DIR/slimlo-api/CMakeLists.txt" ]; then
     echo "    WARNING: cmake not found, skipping C API build"
