@@ -21,6 +21,8 @@
   #include <windows.h>
 #else
   #include <sys/stat.h>
+  #include <unistd.h>
+  #include <ftw.h>
 #endif
 
 // LibreOfficeKit C++ header (thin wrapper over the C API)
@@ -42,6 +44,7 @@
 struct SlimLOInstance {
     lok::Office* office;
     std::string  resource_path;
+    std::string  profile_path;   // temp profile dir, cleaned up on destroy
     std::string  last_error;
     std::mutex   convert_mutex;  // LibreOffice is single-threaded
 };
@@ -124,6 +127,19 @@ static std::string path_to_url(const char* path) {
     return url;
 #endif
 }
+
+#ifndef _WIN32
+// nftw callback for recursive directory removal
+static int remove_cb(const char* fpath, const struct stat* /*sb*/, int /*typeflag*/, struct FTW* /*ftwbuf*/) {
+    return remove(fpath);
+}
+
+static void remove_directory_recursive(const std::string& path) {
+    if (!path.empty()) {
+        nftw(path.c_str(), remove_cb, 64, FTW_DEPTH | FTW_PHYS);
+    }
+}
+#endif
 
 // Map SlimLOFormat to LOKit format string (file extension, not filter name)
 // LOKit's saveAs() maps extensions to internal filter names via aWriterExtensionMap etc.
@@ -214,21 +230,55 @@ SLIMLO_API SlimLOHandle slimlo_init(const char* resource_path) {
     }
 #endif
 
-    lok::Office* office = lok::lok_cpp_init(program_path.c_str());
+    // Create a temp directory for the LOKit user profile.
+    // LOKit's Desktop::Main calls userinstall::finalize() which needs:
+    //   1) share/presets/ to exist (even empty) for copyRecursive
+    //   2) UserInstallation on a local filesystem (not CIFS/network mounts)
+    // Passing user_profile_url to lok_cpp_init sets UserInstallation explicitly.
+    std::string profile_path;
+    std::string profile_url;
+#ifndef _WIN32
+    char profile_template[] = "/tmp/slimlo_profile_XXXXXX";
+    char* profile_dir = mkdtemp(profile_template);
+    if (!profile_dir) {
+        g_init_error = "Failed to create temp profile directory";
+        return nullptr;
+    }
+    profile_path = profile_dir;
+    profile_url = std::string("file://") + profile_dir;
+#else
+    // Windows: use GetTempPath
+    char tmp[MAX_PATH];
+    GetTempPathA(MAX_PATH, tmp);
+    profile_path = std::string(tmp) + "slimlo_profile_" + std::to_string(GetCurrentProcessId());
+    CreateDirectoryA(profile_path.c_str(), nullptr);
+    std::string profile_path_fwd = profile_path;
+    for (auto& c : profile_path_fwd) if (c == '\\') c = '/';
+    profile_url = "file:///" + profile_path_fwd;
+#endif
+
+    lok::Office* office = lok::lok_cpp_init(program_path.c_str(), profile_url.c_str());
     if (!office) {
         g_init_error = "Failed to initialize LibreOfficeKit at: " + program_path;
+#ifndef _WIN32
+        remove_directory_recursive(profile_path);
+#endif
         return nullptr;
     }
 
     auto* instance = new (std::nothrow) SlimLOInstance();
     if (!instance) {
         delete office;
+#ifndef _WIN32
+        remove_directory_recursive(profile_path);
+#endif
         g_init_error = "Out of memory";
         return nullptr;
     }
 
     instance->office = office;
     instance->resource_path = resource_path;
+    instance->profile_path = profile_path;
     g_initialized = true;
 
     return instance;
@@ -243,6 +293,10 @@ SLIMLO_API void slimlo_destroy(SlimLOHandle handle) {
         delete handle->office;
         handle->office = nullptr;
     }
+
+#ifndef _WIN32
+    remove_directory_recursive(handle->profile_path);
+#endif
 
     delete handle;
     g_initialized = false;

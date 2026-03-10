@@ -159,6 +159,11 @@ if [ -d "$INSTDIR/$SHARE_FOLDER/registry" ]; then
     cp -a "$INSTDIR/$SHARE_FOLDER"/registry/*.xcd "$OUTPUT_DIR/share/registry/" 2>/dev/null || true
 fi
 
+# Empty presets directory — required by LOKit's userinstall::finalize().
+# Desktop::Main calls copyRecursive(share/presets, user/) during init;
+# without this directory, LOKit exits with "User installation could not be completed" (exit 77).
+mkdir -p "$OUTPUT_DIR/share/presets"
+
 # -----------------------------------------------------------
 # 5. Filter definitions (required for format detection/export)
 # -----------------------------------------------------------
