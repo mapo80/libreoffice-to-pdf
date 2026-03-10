@@ -297,6 +297,40 @@ No additional system dependencies needed — macOS system frameworks suffice. Th
 
 Requires the [Visual C++ Redistributable 2022](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist). The `SlimLO.NativeAssets.Windows` NuGet package bundles the LibreOffice engine and worker for both x64 and ARM64. No additional system libraries needed.
 
+### Deploying to Azure App Service (Linux)
+
+Azure App Service runs on a custom Linux environment where `/home` is a **CIFS-mounted network filesystem**. This caused a critical issue in SlimLO <= 0.1.4:
+
+```
+LibreOffice 25.8 - Fatal Error:
+The application cannot be started.
+User installation could not be completed.
+EXIT: 77
+```
+
+**Root cause:** LibreOfficeKit internally launches `soffice_main()` in a background thread, which calls `Desktop::Main()` → `userinstall::finalize()`. This function performs two operations:
+
+1. **`copyRecursive(share/presets, user/)`** — copies preset configuration files from the installation directory to the user profile. Prior to 0.1.5, the `share/presets/` directory was missing from the NuGet package, causing the copy to fail with `E_NOENT`, which triggered `FatalError` → `_exit(77)`.
+
+2. **`ConfigurationChanges::commit()`** — writes `ooSetupInstCompleted=true` to the user configuration backend. When `UserInstallation` resolved to a CIFS-mounted path (via `bootstraprc`: `$SYSUSERCONFIG/libreoffice/4` → `$HOME/.config/libreoffice/4`), the atomic write operations required by the configuration backend failed silently on the network filesystem.
+
+**How it was diagnosed:** Direct SSH access to the App Service confirmed the issue. The `slimlo_worker` process was spawned correctly, `ldd` showed all dependencies resolved, but sending an init message via `perl` reproduced exit code 77 immediately. Key observations:
+
+- Docker containers with the same NuGet package worked fine (ext4 local filesystem)
+- Creating an empty `share/presets/` on the App Service was not sufficient alone
+- Setting `HOME=/tmp` (local overlay filesystem) + creating empty `share/presets/` → **exit code 0**
+- This confirmed both conditions were required: local filesystem for `UserInstallation` AND `share/presets/` present
+
+**Fix (since 0.1.5):** Two changes in `slimlo_init()`:
+
+1. **Explicit user profile URL** — `slimlo_init()` now creates a temporary directory via `mkdtemp("/tmp/slimlo_profile_XXXXXX")` and passes it as `user_profile_url` to `lok_cpp_init()`. This causes LOKit's `lo_initialize()` to call `rtl::Bootstrap::set("UserInstallation", url)`, placing all user profile writes on the local `/tmp` filesystem regardless of where `$HOME` points. The directory is cleaned up in `slimlo_destroy()`.
+
+2. **Empty `share/presets/` directory** — The build script (`extract-artifacts.sh`) now creates an empty `share/presets/` in the output. LibreOffice's `copyRecursive()` handles an empty directory correctly (returns `E_None`), allowing `userinstall::finalize()` to proceed to the configuration commit step.
+
+**No action required from users** — the fix is transparent. `slimlo.h` API is unchanged. If you were on 0.1.4, simply upgrade to 0.1.5+.
+
+> **Technical deep-dive:** The LOKit initialization path (`lo-src/desktop/source/lib/init.cxx:8500`) creates a background thread that runs the full `Desktop::Main()` lifecycle, including user installation finalization. When `pUserProfileUrl` is passed to `lok_cpp_init()`, it sets both `UserInstallation` and `BRAND_BASE_DIR` via `rtl::Bootstrap::set()` before the background thread starts, ensuring all filesystem operations target the controlled temp directory rather than relying on `bootstraprc` resolution through potentially problematic filesystems.
+
 ### Environment variables
 
 | Variable | Description |

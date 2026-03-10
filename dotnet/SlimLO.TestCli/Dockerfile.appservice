@@ -1,0 +1,19 @@
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+WORKDIR /src
+COPY SlimLO.TestCli.csproj .
+RUN dotnet restore
+COPY Program.cs .
+RUN dotnet publish -c Release --self-contained false -o /app
+
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
+
+# NO system libs installed - simulating App Service without Docker
+# App Service runs as non-root
+RUN useradd -m appuser
+
+WORKDIR /app
+COPY --from=build /app .
+COPY test.docx .
+
+USER appuser
+ENTRYPOINT ["dotnet", "SlimLO.TestCli.dll", "test.docx"]
