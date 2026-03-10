@@ -89,7 +89,7 @@ case "$(uname -s)" in
                 echo "    Already present: $syslib"
                 continue
             fi
-            SYSLIB_PATH=$(echo "$LDCACHE" | grep -m1 "\\b${syslib}\\b" | awk '{print $NF}')
+            SYSLIB_PATH=$(echo "$LDCACHE" | grep "\\b${syslib}\\b" | awk 'NR==1{print $NF}')
             if [ -n "$SYSLIB_PATH" ] && [ -f "$SYSLIB_PATH" ]; then
                 cp -aL "$SYSLIB_PATH" "$OUTPUT_DIR/program/"
                 echo "    Bundled: $syslib (from $SYSLIB_PATH)"
