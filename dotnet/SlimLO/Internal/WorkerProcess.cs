@@ -79,9 +79,12 @@ internal sealed class WorkerProcess : IAsyncDisposable
                 : $"{paths}:{existing}";
         }
 
-        // On macOS, the SVP (headless) plugin is not available — only the Quartz
-        // backend exists. On Linux/Windows, use SVP for headless operation.
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        // On Linux, use the SVP (headless) backend for headless operation.
+        // On macOS, the SVP plugin is not available — only the Quartz backend exists.
+        // On Windows, the SVP plugin is also not available — only the native Windows
+        // backend (vclplug_winlo.dll) is shipped.  Setting svp causes LOKit to fall
+        // back to the win backend without a message loop, which hangs indefinitely.
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
             psi.Environment["SAL_USE_VCLPLUGIN"] = "svp";
 
         // On macOS, LOKit must use "unipoll" mode to run VCL initialization on the

@@ -726,13 +726,14 @@ int main(void) {
     /* Suppress LibreOffice GUI dialogs in headless mode.
      * On macOS, the SVP plugin is not available — the Quartz (osx) backend
      * is the only VCL plugin, so we must NOT set SAL_USE_VCLPLUGIN.
+     * On Windows, the SVP plugin is also not available — only the native
+     * Windows backend (vclplug_winlo.dll) is shipped.  Setting svp causes
+     * LOKit to fall back to the win backend without a message loop, which
+     * hangs indefinitely.  Leave the env var unset so LOKit uses its
+     * built-in headless mode via the native backend.
      * On Linux, use the SVP (headless) backend. */
-#ifndef __APPLE__
-  #ifdef _WIN32
-    _putenv_s("SAL_USE_VCLPLUGIN", "svp");
-  #else
+#if !defined(__APPLE__) && !defined(_WIN32)
     setenv("SAL_USE_VCLPLUGIN", "svp", 0);  /* Don't override if already set */
-  #endif
 #endif
 
     /* On macOS, LOKit must use "unipoll" mode to run VCL initialization on
