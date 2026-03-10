@@ -98,3 +98,40 @@ jobs:
             exit 1
           fi
           echo "PASS: PDF created successfully ($SIZE bytes)"
+
+      # ---------------------------------------------------------------
+      # Azure App Service simulation
+      # App Service has: HOME on CIFS (/home), no system libs, no fonts.
+      # SlimLO must work with only bundled libs and a local /tmp profile.
+      # ---------------------------------------------------------------
+      - name: "Test: App Service simulation (read-only HOME, no system libs)"
+        env:
+          LANG: en_US.UTF-8
+          HOME: /tmp/appservice_sim_home
+        run: |
+          echo "=== Simulating Azure App Service environment ==="
+          # Create a read-only HOME to simulate CIFS-mounted /home
+          mkdir -p /tmp/appservice_sim_home
+          chmod 555 /tmp/appservice_sim_home
+          echo "HOME=$HOME (read-only: $(stat -c %a /tmp/appservice_sim_home))"
+
+          # Remove system fontconfig/freetype to ensure bundled libs are used
+          sudo apt-get remove -y libfontconfig1 libfreetype6 2>/dev/null || true
+          echo "System fontconfig removed — only bundled libs available"
+
+          # Run conversion with restricted environment
+          dotnet /tmp/app/Example.dll \
+            tests/fixtures/rich_formatting.docx /tmp/output_appservice.pdf
+
+          # Verify output
+          if [ ! -f /tmp/output_appservice.pdf ]; then
+            echo "FAIL: App Service sim — PDF not created"
+            exit 1
+          fi
+          SIZE=$(stat -c%s /tmp/output_appservice.pdf)
+          echo "App Service sim: PDF $SIZE bytes"
+          if [ "$SIZE" -lt 1000 ]; then
+            echo "FAIL: App Service sim — PDF too small ($SIZE bytes)"
+            exit 1
+          fi
+          echo "PASS: App Service simulation — PDF created ($SIZE bytes)"
