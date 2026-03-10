@@ -23,6 +23,8 @@
           DestinationFiles="@(_SlimLOPresets_macOS->'$(OutDir)presets/%(RecursiveDir)%(Filename)%(Extension)')"
           SkipUnchangedFiles="true" Condition="'@(_SlimLOPresets_macOS)' != ''" />
     <MakeDir Directories="$(OutDir)presets" />
+    <WriteLinesToFile File="$(OutDir)presets/.keep" Lines="" Overwrite="false"
+                     Condition="!Exists('$(OutDir)presets/.keep')" />
     <!-- macOS .app bundle paths: Resources/ and Frameworks/ both map to program/
          because on macOS, program/ contains everything (libs, RC files, registry,
          config, filter). The share/ dir is redundant but kept for consistency. -->
@@ -48,6 +50,8 @@
           DestinationFiles="@(_SlimLOPresetsPub_macOS->'$(PublishDir)presets/%(RecursiveDir)%(Filename)%(Extension)')"
           SkipUnchangedFiles="true" Condition="'@(_SlimLOPresetsPub_macOS)' != ''" />
     <MakeDir Directories="$(PublishDir)presets" />
+    <WriteLinesToFile File="$(PublishDir)presets/.keep" Lines="" Overwrite="false"
+                     Condition="!Exists('$(PublishDir)presets/.keep')" />
     <Exec Command="ln -sf program '$(PublishDir)Resources'" Condition="!Exists('$(PublishDir)Resources')" />
     <Exec Command="ln -sf program '$(PublishDir)Frameworks'" Condition="!Exists('$(PublishDir)Frameworks')" />
   </Target>

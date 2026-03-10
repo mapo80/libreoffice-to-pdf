@@ -221,6 +221,8 @@ if [ -d "$INSTDIR/$PRESETS_FOLDER" ]; then
 else
     mkdir -p "$OUTPUT_DIR/presets"
 fi
+# Placeholder file so empty presets/ survives zip-based deployments (e.g., Azure App Service)
+touch "$OUTPUT_DIR/presets/.keep"
 
 # -----------------------------------------------------------
 # 6b. macOS: Create .app-compatible directory symlinks

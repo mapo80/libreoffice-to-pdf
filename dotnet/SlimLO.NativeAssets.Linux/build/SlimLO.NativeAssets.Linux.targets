@@ -23,6 +23,8 @@
           DestinationFiles="@(_SlimLOPresets_Linux->'$(OutDir)presets/%(RecursiveDir)%(Filename)%(Extension)')"
           SkipUnchangedFiles="true" Condition="'@(_SlimLOPresets_Linux)' != ''" />
     <MakeDir Directories="$(OutDir)presets" />
+    <WriteLinesToFile File="$(OutDir)presets/.keep" Lines="" Overwrite="false"
+                     Condition="!Exists('$(OutDir)presets/.keep')" />
   </Target>
 
   <Target Name="_PublishSlimLOAssets_Linux" AfterTargets="Publish"
@@ -42,6 +44,8 @@
           DestinationFiles="@(_SlimLOPresetsPub_Linux->'$(PublishDir)presets/%(RecursiveDir)%(Filename)%(Extension)')"
           SkipUnchangedFiles="true" Condition="'@(_SlimLOPresetsPub_Linux)' != ''" />
     <MakeDir Directories="$(PublishDir)presets" />
+    <WriteLinesToFile File="$(PublishDir)presets/.keep" Lines="" Overwrite="false"
+                     Condition="!Exists('$(PublishDir)presets/.keep')" />
   </Target>
 
 </Project>

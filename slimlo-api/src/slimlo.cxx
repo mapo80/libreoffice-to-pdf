@@ -230,9 +230,23 @@ SLIMLO_API SlimLOHandle slimlo_init(const char* resource_path) {
     }
 #endif
 
+    // Ensure the presets directory exists at the base level.
+    // LOKit's userinstall::create() copies from baseUri/LIBO_SHARE_PRESETS_FOLDER
+    // to the user profile. On Linux, this is "<resource_path>/presets" (NOT share/presets).
+    // Deployment methods like Azure zip deploy may strip empty directories, so we
+    // create it at runtime as a safety net. Errors are silently ignored (e.g., read-only FS).
+    {
+        std::string presets_path = base + "/presets";
+#ifndef _WIN32
+        mkdir(presets_path.c_str(), 0755);
+#else
+        CreateDirectoryA(presets_path.c_str(), nullptr);
+#endif
+    }
+
     // Create a temp directory for the LOKit user profile.
     // LOKit's Desktop::Main calls userinstall::finalize() which needs:
-    //   1) share/presets/ to exist (even empty) for copyRecursive
+    //   1) presets/ to exist (even empty) for copyRecursive
     //   2) UserInstallation on a local filesystem (not CIFS/network mounts)
     // Passing user_profile_url to lok_cpp_init sets UserInstallation explicitly.
     std::string profile_path;
