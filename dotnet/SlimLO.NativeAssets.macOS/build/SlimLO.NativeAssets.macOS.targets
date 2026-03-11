@@ -30,11 +30,12 @@
          config, filter). The share/ dir is redundant but kept for consistency. -->
     <Exec Command="ln -sf program '$(OutDir)Resources'" Condition="!Exists('$(OutDir)Resources')" />
     <Exec Command="ln -sf program '$(OutDir)Frameworks'" Condition="!Exists('$(OutDir)Frameworks')" />
-    <!-- Recreate symlinks stripped during artifact upload -->
-    <Exec Command="cd '$(OutDir)program' &amp;&amp; for f in libslimlo.*.*.*.dylib; do [ -f &quot;$f&quot; ] || continue; soname=$(otool -D &quot;$f&quot; | tail -1 | xargs basename); [ &quot;$soname&quot; != &quot;$f&quot; ] &amp;&amp; ln -sf &quot;$f&quot; &quot;$soname&quot;; base=${soname%%.*}.dylib; [ &quot;$base&quot; != &quot;$soname&quot; ] &amp;&amp; ln -sf &quot;$soname&quot; &quot;$base&quot;; done"
+    <!-- Recreate symlinks stripped during artifact upload.
+         NOTE: Use backticks for command substitution (not $(...)) to avoid MSBuild property expansion. -->
+    <Exec Command="cd '$(OutDir)program' &amp;&amp; for f in libslimlo.*.*.*.dylib; do [ -f &quot;$$f&quot; ] || continue; soname=`otool -D &quot;$$f&quot; | tail -1 | xargs basename`; [ &quot;$$soname&quot; != &quot;$$f&quot; ] &amp;&amp; ln -sf &quot;$$f&quot; &quot;$$soname&quot;; base=$${soname%%.*}.dylib; [ &quot;$$base&quot; != &quot;$$soname&quot; ] &amp;&amp; ln -sf &quot;$$soname&quot; &quot;$$base&quot;; done; true"
            Condition="$([MSBuild]::IsOSPlatform('OSX'))" />
     <!-- Inner symlinks: program/{registry,filter,...} -> ../share/{...} (needed by fundamentalrc) -->
-    <Exec Command="for d in registry filter config palette fonts liblangtag; do [ -d '$(OutDir)share/'$d ] &amp;&amp; [ ! -e '$(OutDir)program/'$d ] &amp;&amp; ln -sfn ../share/$d '$(OutDir)program/'$d; done"
+    <Exec Command="for d in registry filter config palette fonts liblangtag; do [ -d '$(OutDir)share/'$$d ] &amp;&amp; [ ! -e '$(OutDir)program/'$$d ] &amp;&amp; ln -sfn ../share/$$d '$(OutDir)program/'$$d; done; true"
            Condition="$([MSBuild]::IsOSPlatform('OSX'))" />
   </Target>
 
@@ -61,10 +62,10 @@
     <Exec Command="ln -sf program '$(PublishDir)Resources'" Condition="!Exists('$(PublishDir)Resources')" />
     <Exec Command="ln -sf program '$(PublishDir)Frameworks'" Condition="!Exists('$(PublishDir)Frameworks')" />
     <!-- Recreate symlinks stripped during artifact upload -->
-    <Exec Command="cd '$(PublishDir)program' &amp;&amp; for f in libslimlo.*.*.*.dylib; do [ -f &quot;$f&quot; ] || continue; soname=$(otool -D &quot;$f&quot; | tail -1 | xargs basename); [ &quot;$soname&quot; != &quot;$f&quot; ] &amp;&amp; ln -sf &quot;$f&quot; &quot;$soname&quot;; base=${soname%%.*}.dylib; [ &quot;$base&quot; != &quot;$soname&quot; ] &amp;&amp; ln -sf &quot;$soname&quot; &quot;$base&quot;; done"
+    <Exec Command="cd '$(PublishDir)program' &amp;&amp; for f in libslimlo.*.*.*.dylib; do [ -f &quot;$$f&quot; ] || continue; soname=`otool -D &quot;$$f&quot; | tail -1 | xargs basename`; [ &quot;$$soname&quot; != &quot;$$f&quot; ] &amp;&amp; ln -sf &quot;$$f&quot; &quot;$$soname&quot;; base=$${soname%%.*}.dylib; [ &quot;$$base&quot; != &quot;$$soname&quot; ] &amp;&amp; ln -sf &quot;$$soname&quot; &quot;$$base&quot;; done; true"
            Condition="$([MSBuild]::IsOSPlatform('OSX'))" />
     <!-- Inner symlinks: program/{registry,filter,...} -> ../share/{...} (needed by fundamentalrc) -->
-    <Exec Command="for d in registry filter config palette fonts liblangtag; do [ -d '$(PublishDir)share/'$d ] &amp;&amp; [ ! -e '$(PublishDir)program/'$d ] &amp;&amp; ln -sfn ../share/$d '$(PublishDir)program/'$d; done"
+    <Exec Command="for d in registry filter config palette fonts liblangtag; do [ -d '$(PublishDir)share/'$$d ] &amp;&amp; [ ! -e '$(PublishDir)program/'$$d ] &amp;&amp; ln -sfn ../share/$$d '$(PublishDir)program/'$$d; done; true"
            Condition="$([MSBuild]::IsOSPlatform('OSX'))" />
   </Target>
 
