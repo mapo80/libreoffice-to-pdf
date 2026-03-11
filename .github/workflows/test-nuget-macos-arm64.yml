@@ -71,6 +71,27 @@ jobs:
             -p:SlimLOVersion=${{ steps.version.outputs.version }} \
             -o /tmp/app
 
+      - name: Diagnose published app
+        if: always()
+        run: |
+          echo "=== Symlinks in program/ ==="
+          ls -la /tmp/app/program/libslimlo* 2>/dev/null || echo "No libslimlo files"
+          ls -la /tmp/app/program/registry 2>/dev/null || echo "No registry symlink"
+          ls -la /tmp/app/Resources 2>/dev/null || echo "No Resources symlink"
+          ls -la /tmp/app/Frameworks 2>/dev/null || echo "No Frameworks symlink"
+
+          echo ""
+          echo "=== share/ contents ==="
+          ls /tmp/app/share/ 2>/dev/null || echo "No share dir"
+
+          echo ""
+          echo "=== RPATH of slimlo_worker ==="
+          otool -l /tmp/app/program/slimlo_worker 2>/dev/null | grep -A2 LC_RPATH || echo "No LC_RPATH"
+
+          echo ""
+          echo "=== Direct worker test ==="
+          SAL_LOK_OPTIONS=unipoll /tmp/app/program/slimlo_worker --help 2>&1 || echo "Worker exit: $?"
+
       - name: Run DOCX to PDF conversion
         env:
           SAL_LOK_OPTIONS: unipoll
