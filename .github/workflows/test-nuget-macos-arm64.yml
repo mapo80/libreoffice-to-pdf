@@ -71,6 +71,59 @@ jobs:
             -p:SlimLOVersion=${{ steps.version.outputs.version }} \
             -o /tmp/app
 
+      - name: Diagnose native binaries
+        run: |
+          echo "=== Published app contents ==="
+          ls -la /tmp/app/runtimes/osx-arm64/native/ 2>/dev/null || echo "No runtimes dir"
+          ls -la /tmp/app/program/ 2>/dev/null || echo "No program dir"
+
+          # Find slimlo_worker and check RPATH
+          WORKER=$(find /tmp/app -name slimlo_worker -type f | head -1)
+          if [ -n "$WORKER" ]; then
+            echo ""
+            echo "=== slimlo_worker location: $WORKER ==="
+            echo "--- RPATH ---"
+            otool -l "$WORKER" | grep -A2 LC_RPATH || echo "No LC_RPATH found"
+            echo "--- Linked libs ---"
+            otool -L "$WORKER"
+          else
+            echo "WARNING: slimlo_worker not found!"
+            find /tmp/app -type f | head -30
+          fi
+
+          # Find libslimlo and check RPATH
+          SLIMLO=$(find /tmp/app -name 'libslimlo*.dylib' -not -name '*.dylib.*' -type f | head -1)
+          if [ -n "$SLIMLO" ]; then
+            echo ""
+            echo "=== libslimlo location: $SLIMLO ==="
+            echo "--- RPATH ---"
+            otool -l "$SLIMLO" | grep -A2 LC_RPATH || echo "No LC_RPATH found"
+            echo "--- Linked libs ---"
+            otool -L "$SLIMLO"
+          fi
+
+          # Check if libmergedlo exists
+          MERGED=$(find /tmp/app -name 'libmergedlo*' -type f | head -1)
+          if [ -n "$MERGED" ]; then
+            echo ""
+            echo "=== libmergedlo location: $MERGED ==="
+            echo "--- RPATH ---"
+            otool -l "$MERGED" | grep -A2 LC_RPATH || echo "No LC_RPATH found"
+          else
+            echo "WARNING: libmergedlo not found!"
+          fi
+
+          # Try launching worker directly to capture stderr
+          echo ""
+          echo "=== Direct worker launch test ==="
+          PROG_DIR=$(dirname "$WORKER")
+          echo "Program dir: $PROG_DIR"
+          SAL_LOK_OPTIONS=unipoll DYLD_LIBRARY_PATH="$PROG_DIR" "$WORKER" --help 2>&1 || echo "Worker exited with code: $?"
+
+          echo ""
+          echo "=== Launch WITHOUT DYLD_LIBRARY_PATH ==="
+          SAL_LOK_OPTIONS=unipoll "$WORKER" --help 2>&1 || echo "Worker exited with code: $?"
+
       - name: Run DOCX to PDF conversion
         env:
           SAL_LOK_OPTIONS: unipoll
