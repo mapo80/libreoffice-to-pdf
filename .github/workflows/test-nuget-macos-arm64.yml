@@ -71,32 +71,6 @@ jobs:
             -p:SlimLOVersion=${{ steps.version.outputs.version }} \
             -o /tmp/app
 
-      - name: Fix missing symlinks
-        run: |
-          APP=/tmp/app
-
-          # 1. SOVERSION symlinks for libslimlo
-          cd "$APP/program"
-          for f in libslimlo.*.*.*.dylib; do
-            [ -f "$f" ] || continue
-            soname=$(otool -D "$f" | tail -1 | xargs basename)
-            [ "$soname" != "$f" ] && [ ! -e "$soname" ] && ln -sf "$f" "$soname"
-            base="${soname%%.*}.dylib"
-            [ "$base" != "$soname" ] && [ ! -e "$base" ] && ln -sf "$soname" "$base"
-          done
-
-          # 2. Inner symlinks: program/{registry,filter,...} -> ../share/{...}
-          # (stripped during artifact upload, needed by fundamentalrc)
-          for subdir in registry filter config palette fonts liblangtag; do
-            if [ -d "$APP/share/$subdir" ] && [ ! -e "$APP/program/$subdir" ]; then
-              echo "Creating symlink: program/$subdir -> ../share/$subdir"
-              ln -sfn "../share/$subdir" "$APP/program/$subdir"
-            fi
-          done
-
-          echo "=== Symlink verification ==="
-          ls -la "$APP/program/libslimlo"* "$APP/program/registry" 2>/dev/null || true
-
       - name: Run DOCX to PDF conversion
         env:
           SAL_LOK_OPTIONS: unipoll
