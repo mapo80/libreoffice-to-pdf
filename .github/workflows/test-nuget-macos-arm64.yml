@@ -71,26 +71,31 @@ jobs:
             -p:SlimLOVersion=${{ steps.version.outputs.version }} \
             -o /tmp/app
 
-      - name: Fix missing SOVERSION symlinks
+      - name: Fix missing symlinks
         run: |
-          cd /tmp/app/program
-          # Recreate symlinks stripped during artifact upload
-          # e.g. libslimlo.0.1.0.dylib → libslimlo.0.dylib → libslimlo.dylib
+          APP=/tmp/app
+
+          # 1. SOVERSION symlinks for libslimlo
+          cd "$APP/program"
           for f in libslimlo.*.*.*.dylib; do
             [ -f "$f" ] || continue
             soname=$(otool -D "$f" | tail -1 | xargs basename)
-            if [ "$soname" != "$f" ] && [ ! -e "$soname" ]; then
-              echo "Creating symlink: $soname -> $f"
-              ln -sf "$f" "$soname"
-            fi
+            [ "$soname" != "$f" ] && [ ! -e "$soname" ] && ln -sf "$f" "$soname"
             base="${soname%%.*}.dylib"
-            if [ "$base" != "$soname" ] && [ ! -e "$base" ]; then
-              echo "Creating symlink: $base -> $soname"
-              ln -sf "$soname" "$base"
+            [ "$base" != "$soname" ] && [ ! -e "$base" ] && ln -sf "$soname" "$base"
+          done
+
+          # 2. Inner symlinks: program/{registry,filter,...} -> ../share/{...}
+          # (stripped during artifact upload, needed by fundamentalrc)
+          for subdir in registry filter config palette fonts liblangtag; do
+            if [ -d "$APP/share/$subdir" ] && [ ! -e "$APP/program/$subdir" ]; then
+              echo "Creating symlink: program/$subdir -> ../share/$subdir"
+              ln -sfn "../share/$subdir" "$APP/program/$subdir"
             fi
           done
-          echo "=== program/ after symlink fix ==="
-          ls -la libslimlo*
+
+          echo "=== Symlink verification ==="
+          ls -la "$APP/program/libslimlo"* "$APP/program/registry" 2>/dev/null || true
 
       - name: Run DOCX to PDF conversion
         env:
