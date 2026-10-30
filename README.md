@@ -17,6 +17,7 @@ SlimLO is **not a fork** — it applies 30 idempotent patch scripts to vanilla L
 | **Artifact size** | ~97 MB (macOS arm64) · ~186 MB (Linux x64) |
 | **Merged lib** | ~62 MB `.dylib` (macOS arm64, LTO) · ~98 MB `.so` (Linux x64, LTO) |
 | **LO version** | `libreoffice-25.8.5.1` |
+| **Speed** | ~23–35 ms for a 1–2 page document, ~120–170 ms for 14–23 pages, ~15 conversions/s per worker ([details](#performance)) |
 | **.NET tests** | 195 passing (net8.0 + net6.0) |
 | **Java tests** | 38 passing |
 
@@ -64,6 +65,44 @@ SlimLO strips LibreOffice down to its Writer engine + UNO + DOCX/PDF conversion 
 - **Single merged library** — `--enable-mergelibs` + LTO combines hundreds of LO modules into one `libmergedlo`. Dead code elimination + aggressive stripping reduces 1.5 GB to ~97 MB extracted runtime (macOS arm64) or ~186 MB (Linux x64).
 - **Process isolation** (.NET / Java) — Each conversion runs in a separate native `slimlo_worker` process. LibreOffice crash on a malformed document kills only the worker, never the host application.
 - **Same worker, multiple SDKs** — Both .NET and Java SDKs spawn the same `slimlo_worker` binary and communicate via the same length-prefixed JSON IPC protocol over stdin/stdout pipes.
+
+---
+
+## Performance
+
+Measured with release **v0.1.10** (`SlimLO.NativeAssets.macOS`, `osx-arm64`) on an Apple Silicon
+Mac: one `slimlo_worker`, buffer mode (`convert_buffer`), the 7 documents in
+[`tests/fixtures`](tests/fixtures), 20 rounds, two runs (they agree within 3 %). Times are from
+sending the request to receiving the whole PDF.
+
+| Metric | Value |
+|---|---|
+| Worker start → `ready` (LibreOfficeKit init) | ~235 ms |
+| First conversion after start | ~240 ms |
+| Throughput, one worker | ~15 conversions/s |
+| Peak memory per worker | ~190 MB |
+| Runtime on disk (`osx-arm64`) | 114 MB, 295 files |
+
+| Document | Pages | Median |
+|---|---|---|
+| barcode_font.docx | 1 | 23 ms |
+| rich_formatting.docx | 1 | 30 ms |
+| multi_font.docx | 1 | 31 ms |
+| missing_fonts.docx | 1 | 34 ms |
+| unicode_text.docx | 1 | 36 ms |
+| stress_test.docx | 14 | 117 ms |
+| large_document.docx | 23 | 169 ms |
+
+**Notes:**
+
+- **First conversion.** LibreOffice finishes initialising lazily, so the first conversion on a new
+  worker takes ~240 ms whatever the document. `WarmUp` starts the processes but doesn't convert;
+  for latency-sensitive services, run one throwaway conversion per worker after creating the
+  converter.
+- **Scaling.** Each worker converts one document at a time; `MaxWorkers` runs conversions in
+  parallel in separate processes (~190 MB each), so throughput grows with cores and memory.
+- **File mode** (`ConvertAsync(path, path)`) avoids copying the document and the PDF through the
+  pipes; it was not measured separately.
 
 ---
 
